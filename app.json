@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "지금, 여기",
+    "slug": "nowhere-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.example.nowhere"
+    },
+    "android": {
+      "package": "com.example.nowhere"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
