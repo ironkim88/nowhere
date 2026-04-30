@@ -1,5 +1,14 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import {
+  getAuth,
+  signInAnonymously,
+  onAuthStateChanged,
+  GoogleAuthProvider,
+  signInWithPopup,
+  linkWithPopup,
+  signInWithCredential,
+  signOut,
+} from 'firebase/auth';
 import {
   getFirestore,
   collection,
@@ -37,6 +46,48 @@ export const ensureAnonymousAuth = () =>
       }
     });
   });
+
+export const subscribeToAuth = (onChange) => {
+  return onAuthStateChanged(auth, (user) => {
+    if (user) {
+      onChange(user);
+    } else {
+      signInAnonymously(auth).catch(() => {});
+    }
+  });
+};
+
+export const signInWithGoogle = async () => {
+  const provider = new GoogleAuthProvider();
+  const currentUser = auth.currentUser;
+  try {
+    if (currentUser && currentUser.isAnonymous) {
+      const result = await linkWithPopup(currentUser, provider);
+      return result.user;
+    } else {
+      const result = await signInWithPopup(auth, provider);
+      return result.user;
+    }
+  } catch (e) {
+    if (e.code === 'auth/credential-already-in-use') {
+      const credential = GoogleAuthProvider.credentialFromError(e);
+      if (credential) {
+        const result = await signInWithCredential(auth, credential);
+        return result.user;
+      }
+    }
+    throw e;
+  }
+};
+
+export const signOutAndAnon = async () => {
+  await signOut(auth);
+  const result = await signInAnonymously(auth);
+  return result.user;
+};
+
+export const isGoogleUser = (user) =>
+  user && user.providerData.some((p) => p.providerId === 'google.com');
 
 export const subscribeToPosts = (onUpdate) =>
   onSnapshot(collection(db, 'posts'), (snap) => {

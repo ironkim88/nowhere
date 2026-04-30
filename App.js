@@ -8,6 +8,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView from './Map';
 import {
   ensureAnonymousAuth,
+  subscribeToAuth,
   subscribeToPosts,
   subscribeToProfile,
   upsertPost,
@@ -19,6 +20,9 @@ import {
   subscribeToIsAdmin,
   isNicknameTaken,
   deleteOldPosts,
+  signInWithGoogle,
+  signOutAndAnon,
+  isGoogleUser,
 } from './firebase';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -527,20 +531,19 @@ export default function App() {
     })();
   }, []);
 
-  // Anonymous auth
+  const [authUser, setAuthUser] = useState(null);
   useEffect(() => {
-    (async () => {
-      try {
-        const user = await ensureAnonymousAuth();
-        setUid(user.uid);
-        setAuthReady(true);
-        // Seed posts on first run
-        await seedIfEmpty(seedPosts());
-      } catch (e) {
-        console.warn('auth failed', e);
-        setAuthReady(true);
+    let seedDone = false;
+    const unsub = subscribeToAuth((user) => {
+      setAuthUser(user);
+      setUid(user.uid);
+      setAuthReady(true);
+      if (!seedDone) {
+        seedDone = true;
+        seedIfEmpty(seedPosts()).catch(() => {});
       }
-    })();
+    });
+    return () => unsub();
   }, []);
 
   // Local-only loads (chats, notifications, onboarding)
@@ -725,6 +728,47 @@ export default function App() {
   const updateProfile = (next) => {
     setProfile(next);
     if (next.uid) upsertProfile(next).catch(() => {});
+  };
+
+  const handleGoogleSignIn = async () => {
+    try {
+      const user = await signInWithGoogle();
+      // Auto-fill nickname from Google displayName if user hasn't set custom nick
+      if (
+        user.displayName &&
+        (!profile.nickname || profile.nickname === '동네육아대디')
+      ) {
+        const taken = await isNicknameTaken(user.displayName, user.uid);
+        if (!taken) {
+          updateProfile({ ...profile, uid: user.uid, nickname: user.displayName });
+        }
+      }
+      Alert.alert(
+        '구글 로그인 성공',
+        `${user.email}\n이제 다른 기기에서도 같은 계정으로 사용할 수 있어요.`,
+      );
+    } catch (e) {
+      Alert.alert('로그인 실패', e?.message || '잠시 후 다시 시도해주세요.');
+    }
+  };
+
+  const handleGoogleSignOut = async () => {
+    Alert.alert(
+      '로그아웃',
+      '로그아웃 시 다시 익명 사용자가 됩니다. 계속할까요?',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '로그아웃',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await signOutAndAnon();
+            } catch (e) {}
+          },
+        },
+      ],
+    );
   };
 
   const recentReports = reportsAgainstMe.filter(
@@ -2223,6 +2267,33 @@ export default function App() {
               </View>
 
               <View style={styles.settingsBox}>
+                {isGoogleUser(authUser) ? (
+                  <View style={styles.googleConnectedBox}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.googleConnectedLabel}>
+                        ✓ 구글 계정 연결됨
+                      </Text>
+                      <Text style={styles.googleConnectedEmail}>
+                        {authUser?.email}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.googleSignOutBtn}
+                      onPress={handleGoogleSignOut}
+                    >
+                      <Text style={styles.googleSignOutText}>로그아웃</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.googleSignInBtn}
+                    onPress={handleGoogleSignIn}
+                  >
+                    <Text style={styles.googleSignInText}>
+                      G  구글 계정 연결 (모든 기기 동기화)
+                    </Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   style={styles.inviteBtn}
                   onPress={async () => {
@@ -3882,14 +3953,17 @@ export default function App() {
                 <Text style={styles.submitBtnText}>시작하기</Text>
               </TouchableOpacity>
 
-              <View style={styles.kakaoLoginPlaceholder}>
-                <Text style={styles.kakaoLoginText}>
-                  💛 카카오로 시작하기 (곧 출시)
+              <TouchableOpacity
+                style={styles.googleSignInBtn}
+                onPress={handleGoogleSignIn}
+              >
+                <Text style={styles.googleSignInText}>
+                  G  구글로 시작하기 (모든 기기 동기화)
                 </Text>
-                <Text style={styles.kakaoLoginSub}>
-                  카카오 인증으로 닉네임/연령 자동 입력 예정
-                </Text>
-              </View>
+              </TouchableOpacity>
+              <Text style={styles.signInHint}>
+                💡 익명으로 시작 가능 — 나중에 구글 연결하면 같은 데이터 유지돼요.
+              </Text>
               <View style={{ height: 40 }} />
             </ScrollView>
           </SafeAreaView>
@@ -5014,6 +5088,60 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   cardRatingCount: { fontSize: 10, color: '#92400E', marginLeft: 2 },
+  googleSignInBtn: {
+    backgroundColor: '#FFF',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#DADCE0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  googleSignInText: {
+    color: '#1F1F1F',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  signInHint: {
+    fontSize: 11,
+    color: '#888',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 16,
+  },
+  googleConnectedBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  googleConnectedLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#16A34A',
+  },
+  googleConnectedEmail: {
+    fontSize: 11,
+    color: '#16A34A',
+    marginTop: 2,
+  },
+  googleSignOutBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#FFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#16A34A',
+  },
+  googleSignOutText: { color: '#16A34A', fontSize: 11, fontWeight: '800' },
   rankRow: {
     flexDirection: 'row',
     alignItems: 'center',
