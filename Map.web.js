@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, Circle } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -48,8 +48,12 @@ function ClickHandler({ onPick }) {
 
 function Recenter({ center }) {
   const map = useMap();
+  const lastRef = useRef(null);
   useEffect(() => {
     if (!center) return;
+    const key = `${center.lat.toFixed(5)},${center.lng.toFixed(5)}`;
+    if (lastRef.current === key) return;
+    lastRef.current = key;
     map.setView([center.lat, center.lng], map.getZoom());
   }, [center, map]);
   return null;

@@ -2229,7 +2229,33 @@ export default function App() {
 
           {tab === '채팅' && (
             <View style={{ padding: 20, paddingBottom: 100 }}>
-              <Text style={[styles.headerTitle, { marginBottom: 16 }]}>1:1 채팅 목록 💬</Text>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: 16,
+                }}
+              >
+                <Text style={styles.headerTitle}>1:1 채팅 목록 💬</Text>
+                {chats.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      const ok =
+                        Platform.OS === 'web' && typeof window !== 'undefined'
+                          ? window.confirm('모든 채팅 내역을 삭제할까요?')
+                          : true;
+                      if (!ok) return;
+                      setChats([]);
+                      showToast('채팅 내역 모두 삭제됨', 'success');
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, color: '#FF5C5C', fontWeight: '700' }}>
+                      전체 삭제
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
               <View style={styles.usageBanner}>
                 <View style={styles.usageBannerRow}>
                   <Text style={styles.usageBannerLabel}>오늘 대화 인원</Text>
@@ -2305,6 +2331,21 @@ export default function App() {
                               <Text style={styles.unreadText}>{c.unread}</Text>
                             </View>
                           )}
+                          <TouchableOpacity
+                            style={{ marginTop: 6, paddingHorizontal: 4 }}
+                            onPress={(e) => {
+                              if (e?.stopPropagation) e.stopPropagation();
+                              const ok =
+                                Platform.OS === 'web' && typeof window !== 'undefined'
+                                  ? window.confirm(`${c.partner}와의 채팅 삭제?`)
+                                  : true;
+                              if (!ok) return;
+                              setChats((prev) => prev.filter((x) => x.id !== c.id));
+                              showToast('채팅 삭제됨', 'success');
+                            }}
+                          >
+                            <Text style={{ fontSize: 13, color: '#FF5C5C' }}>🗑</Text>
+                          </TouchableOpacity>
                         </View>
                       </TouchableOpacity>
                     );
