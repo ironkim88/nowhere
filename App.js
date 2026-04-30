@@ -2081,7 +2081,7 @@ export default function App() {
                   <Text style={styles.xBtn}>✕</Text>
                 </TouchableOpacity>
               </View>
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom: 40}}>
+              <ScrollView style={{flex: 1}} showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom: 40}}>
               <View style={styles.profileMain}>
                 <Image
                   source={{ uri: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png' }}
