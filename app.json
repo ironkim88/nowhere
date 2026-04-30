@@ -1,7 +1,8 @@
 {
   "expo": {
     "name": "지금, 여기",
-    "slug": "nowhere-app",
+    "slug": "nowhere",
+    "owner": "ironkims-organization",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -18,11 +19,14 @@
     "android": {
       "package": "com.ironkim88.nowhere",
       "permissions": [
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION",
-        "CAMERA",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE"
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -48,6 +52,11 @@
           "cameraPermission": "도착 인증 사진 촬영을 위해 카메라가 필요해요."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "50a5b87a-01dc-49e7-a6a8-5c174619be5a"
+      }
+    }
   }
 }
