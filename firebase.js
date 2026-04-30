@@ -199,6 +199,29 @@ export const updateReportStatus = async (reportId, status, resolution) => {
   );
 };
 
+export const deleteUserDoc = async (uid) => {
+  await deleteDoc(doc(db, 'users', uid));
+};
+
+export const deleteAllPosts = async () => {
+  const snap = await getDocs(collection(db, 'posts'));
+  await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+  return snap.docs.length;
+};
+
+export const deleteAllUsersExcept = async (keepUid) => {
+  const snap = await getDocs(collection(db, 'users'));
+  const toDelete = snap.docs.filter((d) => d.id !== keepUid);
+  await Promise.all(toDelete.map((d) => deleteDoc(d.ref)));
+  return toDelete.length;
+};
+
+export const deleteAllReports = async () => {
+  const snap = await getDocs(collection(db, 'reports'));
+  await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+  return snap.docs.length;
+};
+
 export const searchUsersByNickname = async (queryText) => {
   if (!queryText || queryText.length < 1) return [];
   const snap = await getDocs(collection(db, 'users'));

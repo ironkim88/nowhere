@@ -37,6 +37,10 @@ import {
   subscribeToAllReports,
   updateReportStatus,
   searchUsersByNickname,
+  deleteUserDoc,
+  deleteAllPosts,
+  deleteAllUsersExcept,
+  deleteAllReports,
 } from './firebase';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -4072,7 +4076,7 @@ export default function App() {
                 <Text style={styles.label}>🧹 시드 데이터 정리</Text>
                 <TouchableOpacity
                   style={[styles.adminActionBtn, { backgroundColor: '#FF5C5C' }]}
-                  onPress={() => {
+                  onPress={async () => {
                     const seeds = posts.filter((p) =>
                       ['러너H', '육아맘A', '커피러버'].includes(p.author),
                     );
@@ -4080,24 +4084,51 @@ export default function App() {
                       showToast('삭제할 시드 데이터 없음', 'info');
                       return;
                     }
-                    Alert.alert(
-                      '시드 데이터 삭제',
-                      `${seeds.length}개의 시드 모임을 삭제할까요?`,
-                      [
-                        { text: '취소', style: 'cancel' },
-                        {
-                          text: '삭제',
-                          style: 'destructive',
-                          onPress: async () => {
-                            await Promise.all(seeds.map((s) => deletePostFs(s.id)));
-                            showToast(`${seeds.length}개 삭제됨`, 'success');
-                          },
-                        },
-                      ],
-                    );
+                    const ok =
+                      Platform.OS === 'web' && typeof window !== 'undefined'
+                        ? window.confirm(`${seeds.length}개의 시드 모임을 삭제할까요?`)
+                        : true;
+                    if (!ok) return;
+                    showToast(`${seeds.length}개 삭제 중...`, 'info');
+                    try {
+                      await Promise.all(seeds.map((s) => deletePostFs(s.id)));
+                      showToast(`✓ ${seeds.length}개 삭제 완료`, 'success');
+                    } catch (e) {
+                      showToast(`삭제 실패: ${e?.message || '권한 확인'}`, 'error');
+                    }
                   }}
                 >
                   <Text style={styles.adminActionBtnText}>🧹 시드 모임 모두 삭제</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.adminActionBtn, { backgroundColor: '#7C3AED' }]}
+                  onPress={async () => {
+                    const ok =
+                      Platform.OS === 'web' && typeof window !== 'undefined'
+                        ? window.confirm(
+                            '⚠️ 모든 모임 + 사용자 프로필 + 신고 데이터를 삭제합니다.\n본인 프로필은 유지됩니다.\n계속할까요?',
+                          )
+                        : true;
+                    if (!ok) return;
+                    showToast('초기화 중...', 'info');
+                    try {
+                      const [p, u, r] = await Promise.all([
+                        deleteAllPosts(),
+                        deleteAllUsersExcept(uid),
+                        deleteAllReports(),
+                      ]);
+                      showToast(
+                        `✓ 모임 ${p} · 사용자 ${u} · 신고 ${r} 삭제됨`,
+                        'success',
+                      );
+                    } catch (e) {
+                      showToast(`초기화 실패: ${e?.message || ''}`, 'error');
+                    }
+                  }}
+                >
+                  <Text style={styles.adminActionBtnText}>
+                    🧨 전체 데이터 초기화 (본인 프로필 제외)
+                  </Text>
                 </TouchableOpacity>
 
                 <Text style={styles.label}>📢 공지사항 보내기</Text>
@@ -4145,6 +4176,31 @@ export default function App() {
                         UID: {u.uid.slice(0, 12)}... · {u.ageGroup} · {u.gender}
                       </Text>
                     </View>
+                    {u.uid !== uid && (
+                      <TouchableOpacity
+                        style={styles.adminMiniBtn}
+                        onPress={async () => {
+                          const ok =
+                            Platform.OS === 'web' && typeof window !== 'undefined'
+                              ? window.confirm(`${u.nickname} 프로필 삭제?`)
+                              : true;
+                          if (!ok) return;
+                          try {
+                            await deleteUserDoc(u.uid);
+                            setAdminUserResults((prev) =>
+                              prev.filter((x) => x.uid !== u.uid),
+                            );
+                            showToast('삭제 완료', 'success');
+                          } catch (e) {
+                            showToast('삭제 실패', 'error');
+                          }
+                        }}
+                      >
+                        <Text style={[styles.adminMiniBtnText, { color: '#FF5C5C' }]}>
+                          🗑 삭제
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 ))}
 
