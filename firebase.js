@@ -70,6 +70,11 @@ export const seedIfEmpty = async (seedPosts) => {
   }
 };
 
+export const subscribeToIsAdmin = (uid, onUpdate) =>
+  onSnapshot(doc(db, 'admins', uid), (snap) => {
+    onUpdate(snap.exists());
+  });
+
 export const submitReportFs = async (report) => {
   const id = `r-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   await setDoc(doc(db, 'reports', id), { ...report, ts: Date.now() });

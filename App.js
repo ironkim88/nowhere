@@ -16,6 +16,7 @@ import {
   seedIfEmpty,
   submitReportFs,
   subscribeToReportsAgainst,
+  subscribeToIsAdmin,
 } from './firebase';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -384,6 +385,7 @@ export default function App() {
   const [pickedLocation, setPickedLocation] = useState(null);
   const [pickedImage, setPickedImage] = useState(null);
   const [reportsAgainstMe, setReportsAgainstMe] = useState([]);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const [modal, setModal] = useState({
     profile: false, write: false, detail: false,
@@ -503,6 +505,13 @@ export default function App() {
     const unsub = subscribeToReportsAgainst(profile.nickname, setReportsAgainstMe);
     return () => unsub();
   }, [authReady, profile.nickname]);
+
+  // Subscribe to admin role
+  useEffect(() => {
+    if (!authReady || !uid) return;
+    const unsub = subscribeToIsAdmin(uid, setIsAdmin);
+    return () => unsub();
+  }, [authReady, uid]);
 
   // Subscribe to profile (Firestore) — auto-create on first run
   useEffect(() => {
@@ -2158,22 +2167,37 @@ export default function App() {
                     trackColor={{ true: '#3182F6', false: '#CCC' }}
                   />
                 </View>
+                {isAdmin ? (
+                  <TouchableOpacity
+                    style={styles.adminEntryBtn}
+                    onPress={() => {
+                      close('profile');
+                      open('admin');
+                    }}
+                  >
+                    <Text style={styles.adminEntryText}>🛠 관리자 모드</Text>
+                  </TouchableOpacity>
+                ) : null}
+
                 <TouchableOpacity
-                  style={styles.adminEntryBtn}
-                  onPress={() => {
-                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                      const pwd = window.prompt('관리자 비밀번호 입력');
-                      if (pwd === null) return;
-                      if (pwd !== 'nowhere2025!') {
-                        Alert.alert('비밀번호가 틀렸어요');
-                        return;
-                      }
+                  style={styles.uidBox}
+                  onPress={async () => {
+                    if (!uid) return;
+                    try {
+                      await Clipboard.setStringAsync(uid);
+                      Alert.alert(
+                        'UID 복사됨',
+                        '관리자로 등록하려면 Firebase Console → Firestore → admins 컬렉션에 이 UID로 문서를 추가하세요.',
+                      );
+                    } catch (e) {
+                      Alert.alert('UID', uid);
                     }
-                    close('profile');
-                    open('admin');
                   }}
                 >
-                  <Text style={styles.adminEntryText}>🛠 관리자 모드 (비밀번호 필요)</Text>
+                  <Text style={styles.uidLabel}>내 UID (탭하면 복사)</Text>
+                  <Text style={styles.uidValue}>
+                    {uid ? `${uid.slice(0, 12)}...` : '로딩...'}
+                  </Text>
                 </TouchableOpacity>
                 {Platform.OS === 'web' &&
                   typeof Notification !== 'undefined' &&
@@ -4692,6 +4716,15 @@ const styles = StyleSheet.create({
     borderColor: '#3182F6',
   },
   notifPermText: { color: '#3182F6', fontSize: 12, fontWeight: '800' },
+  uidBox: {
+    backgroundColor: '#F8F9FA',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginTop: 12,
+  },
+  uidLabel: { fontSize: 10, color: '#888', fontWeight: '700' },
+  uidValue: { fontSize: 11, color: '#3182F6', fontFamily: 'monospace', marginTop: 2 },
   rankRow: {
     flexDirection: 'row',
     alignItems: 'center',
