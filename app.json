@@ -7,7 +7,9 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "scheme": "nowhereapp",
+    "icon": "./assets/icon.png",
     "splash": {
+      "image": "./assets/splash.png",
       "backgroundColor": "#3182F6",
       "resizeMode": "contain"
     },
@@ -22,6 +24,10 @@
     },
     "android": {
       "package": "com.ironkim88.nowhere",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#3182F6"
+      },
       "permissions": [
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
@@ -34,6 +40,7 @@
       ]
     },
     "web": {
+      "favicon": "./assets/favicon.png",
       "bundler": "metro",
       "name": "지금, 여기",
       "shortName": "지금여기",

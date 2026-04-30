@@ -526,6 +526,16 @@ export default function App() {
     setToast({ msg, kind });
     setTimeout(() => setToast(null), 2200);
   };
+  const confirmRun = (message, action) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(message)) action();
+    } else {
+      Alert.alert('확인', message, [
+        { text: '취소', style: 'cancel' },
+        { text: '확인', onPress: action },
+      ]);
+    }
+  };
   const [groupChatInput, setGroupChatInput] = useState('');
   const [announcements, setAnnouncements] = useState([]);
   const [allReports, setAllReports] = useState([]);
@@ -791,6 +801,7 @@ export default function App() {
       lng: coords.lng,
       image: pickedImage,
       author: profile.nickname,
+      authorUid: uid,
       participants: [profile.nickname],
       cancelled: [],
       reviews: [],
@@ -806,18 +817,16 @@ export default function App() {
   };
 
   const handleDeletePost = (id) => {
-    Alert.alert('삭제', '이 모임을 삭제할까요?', [
-      { text: '취소', style: 'cancel' },
-      {
-        text: '삭제',
-        style: 'destructive',
-        onPress: () => {
-          deletePostFs(id).catch(() => {});
-          close('detail');
-          setActivePost(null);
-        },
-      },
-    ]);
+    confirmRun('이 모임을 삭제할까요?', async () => {
+      try {
+        await deletePostFs(id);
+        showToast('삭제 완료', 'success');
+        close('detail');
+        setActivePost(null);
+      } catch (e) {
+        showToast(`삭제 실패: ${e?.message || '권한 확인'}`, 'error');
+      }
+    });
   };
 
   const openDetail = (post) => {
@@ -957,19 +966,12 @@ export default function App() {
 
   const handleCloseEarly = () => {
     if (!activePost) return;
-    Alert.alert(
-      '모임 종료',
-      '지금 즉시 모임을 종료할까요?\n종료 후엔 후기 작성이 가능해져요.',
-      [
-        { text: '취소', style: 'cancel' },
-        {
-          text: '종료',
-          onPress: () => {
-            updateActivePost({ ...activePost, deadlineMs: Date.now() - 1000 });
-            Alert.alert('모임 종료됨', '이제 후기를 작성할 수 있어요.');
-          },
-        },
-      ],
+    confirmRun(
+      '지금 즉시 모임을 종료할까요? 종료 후엔 후기 작성이 가능해져요.',
+      () => {
+        updateActivePost({ ...activePost, deadlineMs: Date.now() - 1000 });
+        showToast('모임이 종료됐어요', 'success');
+      },
     );
   };
 
@@ -1199,25 +1201,17 @@ export default function App() {
 
   const handleCancelJoin = () => {
     if (!activePost) return;
-    Alert.alert(
-      '참여 취소',
+    confirmRun(
       '취소하면 이 모임에 다시 신청할 수 없어요. 정말 취소할까요?',
-      [
-        { text: '돌아가기', style: 'cancel' },
-        {
-          text: '취소하기',
-          style: 'destructive',
-          onPress: () => {
-            updateActivePost({
-              ...activePost,
-              participants: (activePost.participants || []).filter(
-                (n) => n !== profile.nickname,
-              ),
-              cancelled: [...(activePost.cancelled || []), profile.nickname],
-            });
-          },
-        },
-      ],
+      () => {
+        updateActivePost({
+          ...activePost,
+          participants: (activePost.participants || []).filter(
+            (n) => n !== profile.nickname,
+          ),
+          cancelled: [...(activePost.cancelled || []), profile.nickname],
+        });
+      },
     );
   };
 
@@ -3741,9 +3735,21 @@ export default function App() {
                     )}
 
                     {(() => {
-                      const groupChatAvailable =
-                        (isJoined || isMine) &&
+                      const isParticipant = isJoined || isMine;
+                      const ended = Date.now() >= activePost.deadlineMs;
+                      const within12h =
                         Date.now() < activePost.deadlineMs + 12 * 60 * 60 * 1000;
+                      const groupChatAvailable = isParticipant && ended && within12h;
+                      if (!isParticipant) return null;
+                      if (!groupChatAvailable && !ended) {
+                        return (
+                          <View style={styles.groupChatLockBox}>
+                            <Text style={styles.groupChatLockText}>
+                              🔒 참여자 단톡방은 모임 종료 후 12시간 동안 활성화돼요. 그 전엔 댓글로 소통하세요.
+                            </Text>
+                          </View>
+                        );
+                      }
                       if (!groupChatAvailable) return null;
                       return (
                         <TouchableOpacity
@@ -3751,7 +3757,7 @@ export default function App() {
                           onPress={() => open('groupChat')}
                         >
                           <Text style={styles.groupChatBtnText}>
-                            👥 참여자 단톡방 ({(activePost.groupMessages || []).length})
+                            👥 참여자 단톡방 ({(activePost.groupMessages || []).length}) · 종료 후 12시간 활성
                           </Text>
                         </TouchableOpacity>
                       );
@@ -4151,14 +4157,14 @@ export default function App() {
                     <TouchableOpacity
                       style={styles.adminDeleteBtn}
                       onPress={() => {
-                        Alert.alert('관리자 삭제', `'${p.title}' 모임을 삭제할까요?`, [
-                          { text: '취소', style: 'cancel' },
-                          {
-                            text: '삭제',
-                            style: 'destructive',
-                            onPress: () => deletePostFs(p.id).catch(() => {}),
-                          },
-                        ]);
+                        confirmRun(`'${p.title}' 모임을 삭제할까요?`, async () => {
+                          try {
+                            await deletePostFs(p.id);
+                            showToast('삭제됨', 'success');
+                          } catch (e) {
+                            showToast('삭제 실패', 'error');
+                          }
+                        });
                       }}
                     >
                       <Text style={styles.adminDeleteText}>삭제</Text>
@@ -6459,6 +6465,16 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   groupChatBtnText: { color: '#FFF', fontWeight: '800', fontSize: 14 },
+  groupChatLockBox: {
+    backgroundColor: '#F8F9FA',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: '#EEE',
+  },
+  groupChatLockText: { fontSize: 12, color: '#888', lineHeight: 18 },
   gmSender: {
     fontSize: 11,
     color: '#3182F6',

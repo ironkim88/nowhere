@@ -21,6 +21,7 @@ service cloud.firestore {
       allow create: if isAuthed() && request.resource.data.author is string;
       allow update: if isAuthed();
       allow delete: if isAuthed() && (
+        resource.data.authorUid == request.auth.uid ||
         resource.data.author == request.auth.token.name ||
         isAdmin() ||
         // Allow client-side cleanup of expired posts (5+ days past deadline)
