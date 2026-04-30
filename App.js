@@ -17,6 +17,8 @@ import {
   submitReportFs,
   subscribeToReportsAgainst,
   subscribeToIsAdmin,
+  isNicknameTaken,
+  deleteOldPosts,
 } from './firebase';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -97,6 +99,71 @@ const CAPACITY_OPTIONS = [
 
 const DAILY_POST_LIMIT = 3;
 const MAX_MEETUP_AHEAD_HOURS = 3;
+const POST_AUTO_DELETE_DAYS = 5;
+
+const QUICK_REPLIES = [
+  '🏃‍♂️ 곧 도착해요',
+  '⏰ 5분 늦어요',
+  '🙏 오늘 못 가요',
+  '👍 알겠습니다',
+  '📍 어디세요?',
+];
+
+const escapeICS = (s) => String(s || '').replace(/[\n\r,;\\]/g, (m) => '\\' + m);
+const toICSDate = (ms) => {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return (
+    d.getUTCFullYear() +
+    pad(d.getUTCMonth() + 1) +
+    pad(d.getUTCDate()) +
+    'T' +
+    pad(d.getUTCHours()) +
+    pad(d.getUTCMinutes()) +
+    '00Z'
+  );
+};
+const buildICS = (post) => {
+  const start = post.meetupMs || post.deadlineMs;
+  const end = start + 60 * 60 * 1000;
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//지금여기//KR',
+    'BEGIN:VEVENT',
+    `UID:${post.id}@nowhere`,
+    `DTSTAMP:${toICSDate(Date.now())}`,
+    `DTSTART:${toICSDate(start)}`,
+    `DTEND:${toICSDate(end)}`,
+    `SUMMARY:${escapeICS(post.title)}`,
+    `LOCATION:${escapeICS(post.location)}`,
+    `DESCRIPTION:${escapeICS(post.description || '지금, 여기 모임')}`,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+};
+
+const computeHostRating = (posts, hostNickname) => {
+  let likes = 0;
+  let dislikes = 0;
+  posts.forEach((p) => {
+    if (p.author !== hostNickname) return;
+    (p.reviews || []).forEach((r) => {
+      if (r.target === hostNickname) {
+        if (r.rating === 'like') likes += 1;
+        if (r.rating === 'dislike') dislikes += 1;
+      }
+    });
+  });
+  const total = likes + dislikes;
+  if (total === 0) return null;
+  return {
+    score: ((likes / total) * 5).toFixed(1),
+    likes,
+    dislikes,
+    total,
+  };
+};
 
 const parseHHMM = (str) => {
   if (!str) return null;
@@ -335,6 +402,8 @@ const defaultProfile = {
   nickname: '동네육아대디',
   ageGroup: '30대',
   gender: '남성',
+  birthYear: null,
+  ageVerified: false,
   spark: 42.5,
   success: 19,
   noShow: 1,
@@ -512,6 +581,13 @@ export default function App() {
     const unsub = subscribeToIsAdmin(uid, setIsAdmin);
     return () => unsub();
   }, [authReady, uid]);
+
+  // Auto-delete old posts (5+ days past deadline)
+  useEffect(() => {
+    if (!authReady) return;
+    const cutoff = Date.now() - POST_AUTO_DELETE_DAYS * 24 * 60 * 60 * 1000;
+    deleteOldPosts(cutoff).catch(() => {});
+  }, [authReady]);
 
   // Subscribe to profile (Firestore) — auto-create on first run
   useEffect(() => {
@@ -1672,9 +1748,21 @@ export default function App() {
                           </Text>
                         </View>
                         <Text style={styles.cardTitle}>{post.title}</Text>
-                        <Text style={styles.cardCondition}>
-                          👫 {post.gender} · 🎂 {post.ages.join(', ')}
-                        </Text>
+                        {(() => {
+                          const rating = computeHostRating(posts, post.author);
+                          return (
+                            <View style={styles.cardHostRow}>
+                              <Text style={styles.cardCondition}>
+                                👫 {post.gender} · 🎂 {post.ages.join(', ')}
+                              </Text>
+                              {rating ? (
+                                <Text style={styles.cardHostRating}>
+                                  ⭐ {rating.score} ({rating.total})
+                                </Text>
+                              ) : null}
+                            </View>
+                          );
+                        })()}
                         <View style={styles.cardBottomRow}>
                           <View style={{ flex: 1 }}>
                             <Text style={styles.cardLocation}>📍 {post.location}</Text>
@@ -2088,6 +2176,23 @@ export default function App() {
               </View>
 
               <View style={styles.settingsBox}>
+                <TouchableOpacity
+                  style={styles.inviteBtn}
+                  onPress={async () => {
+                    const inviteText = `🏃‍♂️ 동네 짧은 모임 앱 [지금, 여기]\n\n친구 ${profile.nickname}이 초대했어요!\nhttps://nowhere-app-omega.vercel.app`;
+                    try {
+                      await Clipboard.setStringAsync(inviteText);
+                      Alert.alert(
+                        '초대 링크 복사됨',
+                        '카톡이나 메시지에 붙여넣기 해서 친구에게 보내세요!',
+                      );
+                    } catch (e) {
+                      Alert.alert('초대 메시지', inviteText);
+                    }
+                  }}
+                >
+                  <Text style={styles.inviteBtnText}>📨 친구 초대하기</Text>
+                </TouchableOpacity>
                 <View style={styles.settingsRow}>
                   <Text style={styles.settingsLabel}>🌙 다크모드 (베타)</Text>
                   <Switch
@@ -2195,9 +2300,10 @@ export default function App() {
                     Date.now() - profile.lastNicknameChangeAt < 30 * 24 * 60 * 60 * 1000 &&
                     { backgroundColor: '#CCC' },
                 ]}
-                onPress={() => {
-                  if (!editNickname.trim()) return;
-                  if (editNickname.trim() === profile.nickname) {
+                onPress={async () => {
+                  const newNick = editNickname.trim();
+                  if (!newNick) return;
+                  if (newNick === profile.nickname) {
                     close('editProfile');
                     return;
                   }
@@ -2211,9 +2317,19 @@ export default function App() {
                     );
                     return;
                   }
+                  try {
+                    const taken = await isNicknameTaken(newNick, uid);
+                    if (taken) {
+                      Alert.alert(
+                        '닉네임 중복',
+                        `'${newNick}'은 이미 사용 중이에요. 다른 닉네임을 입력해주세요.`,
+                      );
+                      return;
+                    }
+                  } catch (e) {}
                   updateProfile({
                     ...profile,
-                    nickname: editNickname.trim(),
+                    nickname: newNick,
                     lastNicknameChangeAt: Date.now(),
                   });
                   close('editProfile');
@@ -2971,6 +3087,21 @@ export default function App() {
                           );
                         })
                       )}
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={{ paddingVertical: 4 }}
+                      >
+                        {QUICK_REPLIES.map((q) => (
+                          <TouchableOpacity
+                            key={q}
+                            style={styles.quickReplyChip}
+                            onPress={() => setCommentInput(q)}
+                          >
+                            <Text style={styles.quickReplyText}>{q}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
                       <View style={styles.commentInputRow}>
                         <TextInput
                           style={styles.commentInputField}
@@ -3055,9 +3186,35 @@ export default function App() {
                       </View>
                     )}
 
-                    <TouchableOpacity style={styles.shareBtn} onPress={handleShare}>
-                      <Text style={styles.shareBtnText}>🔗 모임 공유하기</Text>
-                    </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', marginTop: 16, gap: 8 }}>
+                      <TouchableOpacity
+                        style={[styles.shareBtn, { flex: 1, marginTop: 0 }]}
+                        onPress={handleShare}
+                      >
+                        <Text style={styles.shareBtnText}>🔗 공유</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.shareBtn, { flex: 1, marginTop: 0 }]}
+                        onPress={() => {
+                          if (Platform.OS !== 'web') {
+                            Alert.alert('지원 예정', '캘린더 추가는 웹에서 가능해요.');
+                            return;
+                          }
+                          const ics = buildICS(activePost);
+                          const blob = new Blob([ics], { type: 'text/calendar' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `${activePost.title.replace(/[^\w가-힣]/g, '_')}.ics`;
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          URL.revokeObjectURL(url);
+                        }}
+                      >
+                        <Text style={styles.shareBtnText}>📅 캘린더 추가</Text>
+                      </TouchableOpacity>
+                    </View>
 
                     {isMine ? (
                       <View>
@@ -3613,6 +3770,22 @@ export default function App() {
                   </TouchableOpacity>
                 ))}
               </View>
+              <Text style={styles.label}>출생연도 (만 14세 이상만 가입)</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="예) 1990"
+                value={profile.birthYear ? String(profile.birthYear) : ''}
+                onChangeText={(t) => {
+                  const num = parseInt(t.replace(/\D/g, ''), 10);
+                  updateProfile({
+                    ...profile,
+                    birthYear: isNaN(num) ? null : num,
+                  });
+                }}
+                keyboardType="numeric"
+                maxLength={4}
+              />
+
               <View style={styles.onboardTerms}>
                 <Text style={styles.onboardTermsText}>
                   시작하면 이용약관과 개인정보 처리방침에 동의한 것으로 간주돼요.{'\n'}
@@ -3623,16 +3796,53 @@ export default function App() {
               <TouchableOpacity
                 style={styles.submitBtn}
                 onPress={async () => {
-                  if (!profile.nickname.trim()) {
+                  const nick = profile.nickname.trim();
+                  if (!nick) {
                     Alert.alert('알림', '닉네임을 입력해주세요.');
                     return;
                   }
+                  if (!profile.birthYear) {
+                    Alert.alert('알림', '출생연도를 입력해주세요.');
+                    return;
+                  }
+                  const age = new Date().getFullYear() - profile.birthYear;
+                  if (age < 14) {
+                    Alert.alert(
+                      '가입 불가',
+                      '만 14세 미만은 가입할 수 없어요.',
+                    );
+                    return;
+                  }
+                  if (age > 100) {
+                    Alert.alert('알림', '출생연도를 다시 확인해주세요.');
+                    return;
+                  }
+                  try {
+                    const taken = await isNicknameTaken(nick, uid);
+                    if (taken) {
+                      Alert.alert(
+                        '닉네임 중복',
+                        `'${nick}'은 이미 사용 중이에요. 다른 닉네임을 입력해주세요.`,
+                      );
+                      return;
+                    }
+                  } catch (e) {}
+                  updateProfile({ ...profile, nickname: nick, ageVerified: true });
                   await AsyncStorage.setItem(STORAGE.onboarded, '1');
                   close('onboarding');
                 }}
               >
                 <Text style={styles.submitBtnText}>시작하기</Text>
               </TouchableOpacity>
+
+              <View style={styles.kakaoLoginPlaceholder}>
+                <Text style={styles.kakaoLoginText}>
+                  💛 카카오로 시작하기 (곧 출시)
+                </Text>
+                <Text style={styles.kakaoLoginSub}>
+                  카카오 인증으로 닉네임/연령 자동 입력 예정
+                </Text>
+              </View>
               <View style={{ height: 40 }} />
             </ScrollView>
           </SafeAreaView>
@@ -3873,6 +4083,23 @@ export default function App() {
                       </View>
                     )}
 
+                    {!blockedSend && (
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={{ paddingVertical: 4 }}
+                      >
+                        {QUICK_REPLIES.map((q) => (
+                          <TouchableOpacity
+                            key={q}
+                            style={styles.quickReplyChip}
+                            onPress={() => setChatInput(q)}
+                          >
+                            <Text style={styles.quickReplyText}>{q}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    )}
                     <View style={styles.chatInputRow}>
                       <TextInput
                         style={[styles.chatInput, blockedSend && styles.chatInputDisabled]}
@@ -4655,6 +4882,43 @@ const styles = StyleSheet.create({
   },
   uidLabel: { fontSize: 10, color: '#888', fontWeight: '700' },
   uidValue: { fontSize: 11, color: '#3182F6', fontFamily: 'monospace', marginTop: 2 },
+  cardHostRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  cardHostRating: { fontSize: 12, color: '#F59E0B', fontWeight: '800' },
+  quickReplyChip: {
+    backgroundColor: '#F0F4FF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: '#E0E7FF',
+  },
+  quickReplyText: { fontSize: 12, color: '#3182F6', fontWeight: '700' },
+  inviteBtn: {
+    backgroundColor: '#FEE500',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  inviteBtnText: { color: '#3C1E1E', fontWeight: '900', fontSize: 14 },
+  kakaoLoginPlaceholder: {
+    backgroundColor: '#FFF8E1',
+    padding: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#FEE500',
+    borderStyle: 'dashed',
+  },
+  kakaoLoginText: { color: '#92400E', fontWeight: '800', fontSize: 13 },
+  kakaoLoginSub: { color: '#92400E', fontSize: 11, marginTop: 4 },
   rankRow: {
     flexDirection: 'row',
     alignItems: 'center',

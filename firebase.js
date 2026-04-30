@@ -70,6 +70,22 @@ export const seedIfEmpty = async (seedPosts) => {
   }
 };
 
+export const isNicknameTaken = async (nickname, excludeUid) => {
+  const q = query(collection(db, 'users'), where('nickname', '==', nickname));
+  const snap = await getDocs(q);
+  return snap.docs.some((d) => d.id !== excludeUid);
+};
+
+export const deleteOldPosts = async (cutoffMs) => {
+  const snap = await getDocs(collection(db, 'posts'));
+  const oldDocs = snap.docs.filter((d) => {
+    const data = d.data();
+    return data.deadlineMs && data.deadlineMs < cutoffMs;
+  });
+  await Promise.all(oldDocs.map((d) => deleteDoc(d.ref)));
+  return oldDocs.length;
+};
+
 export const subscribeToIsAdmin = (uid, onUpdate) =>
   onSnapshot(doc(db, 'admins', uid), (snap) => {
     onUpdate(snap.exists());
