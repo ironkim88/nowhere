@@ -70,4 +70,18 @@ export const seedIfEmpty = async (seedPosts) => {
   }
 };
 
+export const submitReportFs = async (report) => {
+  const id = `r-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  await setDoc(doc(db, 'reports', id), { ...report, ts: Date.now() });
+};
+
+export const subscribeToReportsAgainst = (nickname, onUpdate) =>
+  onSnapshot(
+    query(collection(db, 'reports'), where('target', '==', nickname)),
+    (snap) => {
+      const reports = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      onUpdate(reports);
+    },
+  );
+
 export { serverTimestamp };

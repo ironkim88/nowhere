@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   StyleSheet, Text, View, TouchableOpacity, ScrollView, SafeAreaView,
   Image, Modal, TextInput, Alert, KeyboardAvoidingView, Platform,
@@ -14,6 +14,8 @@ import {
   deletePostFs,
   upsertProfile,
   seedIfEmpty,
+  submitReportFs,
+  subscribeToReportsAgainst,
 } from './firebase';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -125,6 +127,88 @@ const isSameDay = (a, b) => {
     da.getDate() === db.getDate()
   );
 };
+
+const WHEEL_ITEM_HEIGHT = 44;
+const WHEEL_VISIBLE_ITEMS = 5;
+
+function WheelPicker({ items, value, onChange }) {
+  const scrollRef = useRef(null);
+  const debounceRef = useRef(null);
+  const initRef = useRef(false);
+  const idx = Math.max(0, items.indexOf(value));
+
+  useEffect(() => {
+    if (initRef.current || !scrollRef.current) return;
+    initRef.current = true;
+    setTimeout(() => {
+      scrollRef.current?.scrollTo({
+        y: idx * WHEEL_ITEM_HEIGHT,
+        animated: false,
+      });
+    }, 50);
+  }, [idx]);
+
+  const onScroll = (e) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const y = e.nativeEvent.contentOffset.y;
+    debounceRef.current = setTimeout(() => {
+      const newIdx = Math.round(y / WHEEL_ITEM_HEIGHT);
+      const clamped = Math.max(0, Math.min(items.length - 1, newIdx));
+      if (items[clamped] !== value) onChange(items[clamped]);
+    }, 120);
+  };
+
+  return (
+    <View style={{ position: 'relative', width: 80, height: WHEEL_ITEM_HEIGHT * WHEEL_VISIBLE_ITEMS }}>
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: WHEEL_ITEM_HEIGHT * Math.floor(WHEEL_VISIBLE_ITEMS / 2),
+          left: 0,
+          right: 0,
+          height: WHEEL_ITEM_HEIGHT,
+          backgroundColor: '#F0F4FF',
+          borderRadius: 8,
+          zIndex: 0,
+        }}
+      />
+      <ScrollView
+        ref={scrollRef}
+        showsVerticalScrollIndicator={false}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        snapToInterval={WHEEL_ITEM_HEIGHT}
+        decelerationRate="fast"
+        contentContainerStyle={{
+          paddingVertical: WHEEL_ITEM_HEIGHT * Math.floor(WHEEL_VISIBLE_ITEMS / 2),
+        }}
+        style={{ flex: 1, zIndex: 1 }}
+      >
+        {items.map((item, i) => (
+          <View
+            key={item}
+            style={{
+              height: WHEEL_ITEM_HEIGHT,
+              justifyContent: 'center',
+              alignItems: 'center',
+            }}
+          >
+            <Text
+              style={{
+                fontSize: i === idx ? 22 : 16,
+                color: i === idx ? '#3182F6' : '#AAA',
+                fontWeight: i === idx ? '900' : '500',
+              }}
+            >
+              {String(item).padStart(2, '0')}
+            </Text>
+          </View>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
 
 const formatTimeHHMM = (ms) => {
   const d = new Date(ms);
@@ -292,11 +376,14 @@ export default function App() {
   const [notifications, setNotifications] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewRadiusKm, setViewRadiusKm] = useState(5);
+  const [sortMode, setSortMode] = useState('deadline');
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [userLocation, setUserLocation] = useState(DEFAULT_LOCATION);
   const [locationStatus, setLocationStatus] = useState('default');
   const [darkMode, setDarkMode] = useState(false);
   const [pickedLocation, setPickedLocation] = useState(null);
   const [pickedImage, setPickedImage] = useState(null);
+  const [reportsAgainstMe, setReportsAgainstMe] = useState([]);
 
   const [modal, setModal] = useState({
     profile: false, write: false, detail: false,
@@ -410,6 +497,13 @@ export default function App() {
     return () => unsub();
   }, [authReady]);
 
+  // Subscribe to reports against me
+  useEffect(() => {
+    if (!authReady || !profile.nickname) return;
+    const unsub = subscribeToReportsAgainst(profile.nickname, setReportsAgainstMe);
+    return () => unsub();
+  }, [authReady, profile.nickname]);
+
   // Subscribe to profile (Firestore) — auto-create on first run
   useEffect(() => {
     if (!authReady || !uid) return;
@@ -443,6 +537,13 @@ export default function App() {
   };
 
   const handleAddPost = () => {
+    if (isSuspended) {
+      Alert.alert(
+        '계정 정지 중',
+        `신고 누적으로 24시간 정지 중이에요.\n해제: ${new Date(suspensionEndsAt).toLocaleString('ko-KR')}`,
+      );
+      return;
+    }
     if (!form.title.trim() || !form.location.trim()) {
       Alert.alert('알림', '제목과 장소를 모두 입력해주세요.');
       return;
@@ -540,6 +641,14 @@ export default function App() {
     setProfile(next);
     if (next.uid) upsertProfile(next).catch(() => {});
   };
+
+  const recentReports = reportsAgainstMe.filter(
+    (r) => r.ts > Date.now() - 24 * 60 * 60 * 1000,
+  );
+  const isSuspended = recentReports.length >= 3;
+  const suspensionEndsAt = isSuspended
+    ? Math.max(...recentReports.map((r) => r.ts)) + 24 * 60 * 60 * 1000
+    : null;
 
   const handleJoin = () => {
     if (!activePost) return;
@@ -794,7 +903,7 @@ export default function App() {
     open('report');
   };
 
-  const submitReport = () => {
+  const submitReport = async () => {
     if (!reportTarget) {
       Alert.alert('알림', '신고할 유저를 선택해주세요.');
       return;
@@ -804,10 +913,21 @@ export default function App() {
       return;
     }
     const reasonLabel = REPORT_REASONS.find((r) => r.id === reportReason)?.label || '';
-    Alert.alert(
-      '신고 완료',
-      `${reportTarget}님을 [${reasonLabel}] 사유로 신고했어요.\n검토 후 누적 시 자동 제재됩니다.`,
-    );
+    try {
+      await submitReportFs({
+        from: profile.nickname,
+        target: reportTarget,
+        reason: reportReason,
+        reasonLabel,
+        postId: activePost?.id || null,
+      });
+      Alert.alert(
+        '신고 완료',
+        `${reportTarget}님을 [${reasonLabel}] 사유로 신고했어요.\n24시간 내 신고 3회 누적 시 자동 정지됩니다.`,
+      );
+    } catch (e) {
+      Alert.alert('신고 실패', '잠시 후 다시 시도해주세요.');
+    }
     close('report');
     setReportTarget(null);
     setReportReason(null);
@@ -870,6 +990,17 @@ export default function App() {
 
   const isFriend = (nickname) => (profile.friends || []).includes(nickname);
   const isBlocked = (nickname) => (profile.blocked || []).includes(nickname);
+  const isFavorite = (nickname) => (profile.favorites || []).includes(nickname);
+
+  const toggleFavorite = (nickname) => {
+    const favs = profile.favorites || [];
+    updateProfile({
+      ...profile,
+      favorites: favs.includes(nickname)
+        ? favs.filter((n) => n !== nickname)
+        : [...favs, nickname],
+    });
+  };
 
   const chatUsage = ensureUsageToday(profile.chatUsage);
   const messagesSentTo = (target) => chatUsage.messages[target] || 0;
@@ -1016,6 +1147,10 @@ export default function App() {
 
   const handleAddComment = () => {
     if (!commentInput.trim() || !activePost) return;
+    if (isSuspended) {
+      Alert.alert('정지 중', '신고 누적으로 댓글 작성이 제한됐어요.');
+      return;
+    }
     const updated = {
       ...activePost,
       comments: [
@@ -1111,10 +1246,12 @@ export default function App() {
 
   const visiblePosts = useMemo(() => {
     const blocked = profile.blocked || [];
+    const favs = profile.favorites || [];
     let list = postsWithDistance.filter((p) => !blocked.includes(p.author));
     list = list.filter(
       (p) => p.distance == null || p.distance <= viewRadiusKm,
     );
+    if (favoritesOnly) list = list.filter((p) => favs.includes(p.author));
     if (filterCategory) list = list.filter((p) => p.category === filterCategory);
     const q = searchQuery.trim().toLowerCase();
     if (q) {
@@ -1123,8 +1260,15 @@ export default function App() {
           .some((s) => s.toLowerCase().includes(q)),
       );
     }
-    return [...list].sort((a, b) => a.deadlineMs - b.deadlineMs);
-  }, [postsWithDistance, filterCategory, searchQuery, viewRadiusKm, profile.blocked]);
+    const sortFns = {
+      deadline: (a, b) => a.deadlineMs - b.deadlineMs,
+      distance: (a, b) =>
+        (a.distance ?? Number.POSITIVE_INFINITY) -
+        (b.distance ?? Number.POSITIVE_INFINITY),
+      newest: (a, b) => (b.createdAt || 0) - (a.createdAt || 0),
+    };
+    return [...list].sort(sortFns[sortMode] || sortFns.deadline);
+  }, [postsWithDistance, filterCategory, searchQuery, viewRadiusKm, sortMode, favoritesOnly, profile.blocked, profile.favorites]);
 
   const heroStats = useMemo(() => {
     const open = posts.filter((p) => p.deadlineMs > now);
@@ -1189,6 +1333,18 @@ export default function App() {
     return { name: '🪨 휴면', color: '#888' };
   };
 
+  const sendBrowserPush = (title, body) => {
+    if (
+      Platform.OS === 'web' &&
+      typeof Notification !== 'undefined' &&
+      Notification.permission === 'granted'
+    ) {
+      try {
+        new Notification(title, { body, icon: '/favicon.ico' });
+      } catch (e) {}
+    }
+  };
+
   useEffect(() => {
     setNotifications((prev) => {
       const existingKeys = new Set(prev.map((n) => n.key));
@@ -1214,6 +1370,26 @@ export default function App() {
               read: false,
               postId: p.id,
             });
+            sendBrowserPush('⏰ 마감 임박', `'${p.title}' 마감까지 ${minsLeft}분`);
+          }
+        }
+        // 30 minutes before meetup
+        const meetupMs = p.meetupMs || p.deadlineMs;
+        const meetupMinsLeft = Math.floor((meetupMs - now) / 60000);
+        if (meetupMinsLeft > 25 && meetupMinsLeft <= 30) {
+          const key = `pre-meetup-${p.id}`;
+          if (!existingKeys.has(key)) {
+            additions.push({
+              id: `n-${Date.now()}-pm-${p.id}`,
+              key,
+              type: 'pre-meetup',
+              title: '🚀 곧 시작!',
+              body: `'${p.title}' 30분 후 만나요. ${p.location}에서!`,
+              ts: Date.now(),
+              read: false,
+              postId: p.id,
+            });
+            sendBrowserPush('🚀 곧 시작!', `'${p.title}' 30분 후 만나요`);
           }
         }
       });
@@ -1451,6 +1627,52 @@ export default function App() {
                   </Text>
                 </TouchableOpacity>
               </View>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.sortScroll}
+              >
+                {[
+                  { id: 'deadline', label: '⏰ 임박순' },
+                  { id: 'distance', label: '📍 가까운 순' },
+                  { id: 'newest', label: '🆕 새 모임' },
+                ].map((opt) => (
+                  <TouchableOpacity
+                    key={opt.id}
+                    style={[
+                      styles.sortChip,
+                      sortMode === opt.id && styles.sortChipOn,
+                    ]}
+                    onPress={() => setSortMode(opt.id)}
+                  >
+                    <Text
+                      style={[
+                        styles.sortChipText,
+                        sortMode === opt.id && styles.sortChipTextOn,
+                      ]}
+                    >
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  style={[
+                    styles.sortChip,
+                    favoritesOnly && styles.sortChipFavOn,
+                  ]}
+                  onPress={() => setFavoritesOnly(!favoritesOnly)}
+                >
+                  <Text
+                    style={[
+                      styles.sortChipText,
+                      favoritesOnly && { color: '#FFF', fontWeight: '800' },
+                    ]}
+                  >
+                    {favoritesOnly ? '⭐ 즐겨찾기 ON' : '☆ 즐겨찾기'}
+                  </Text>
+                </TouchableOpacity>
+              </ScrollView>
 
               <View style={styles.header}>
                 <Text style={styles.headerTitle}>
@@ -1939,12 +2161,40 @@ export default function App() {
                 <TouchableOpacity
                   style={styles.adminEntryBtn}
                   onPress={() => {
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      const pwd = window.prompt('관리자 비밀번호 입력');
+                      if (pwd === null) return;
+                      if (pwd !== 'nowhere2025!') {
+                        Alert.alert('비밀번호가 틀렸어요');
+                        return;
+                      }
+                    }
                     close('profile');
                     open('admin');
                   }}
                 >
-                  <Text style={styles.adminEntryText}>🛠 관리자 모드 (데모)</Text>
+                  <Text style={styles.adminEntryText}>🛠 관리자 모드 (비밀번호 필요)</Text>
                 </TouchableOpacity>
+                {Platform.OS === 'web' &&
+                  typeof Notification !== 'undefined' &&
+                  Notification.permission !== 'granted' && (
+                    <TouchableOpacity
+                      style={styles.notifPermBtn}
+                      onPress={async () => {
+                        try {
+                          const result = await Notification.requestPermission();
+                          if (result === 'granted') {
+                            Alert.alert(
+                              '알림 켜짐',
+                              '마감 임박/곧 시작 알림을 브라우저로 받게 돼요.',
+                            );
+                          }
+                        } catch (e) {}
+                      }}
+                    >
+                      <Text style={styles.notifPermText}>🔔 푸시 알림 받기</Text>
+                    </TouchableOpacity>
+                  )}
               </View>
             </View>
           </View>
@@ -1973,11 +2223,45 @@ export default function App() {
                 placeholder="닉네임 입력"
                 maxLength={20}
               />
+              {profile.lastNicknameChangeAt &&
+                Date.now() - profile.lastNicknameChangeAt < 30 * 24 * 60 * 60 * 1000 ? (
+                <View style={styles.lockedNotice}>
+                  <Text style={styles.lockedNoticeText}>
+                    ⚠️ 닉네임은 30일에 1번만 변경할 수 있어요. 다음 변경 가능:{' '}
+                    {new Date(
+                      profile.lastNicknameChangeAt + 30 * 24 * 60 * 60 * 1000,
+                    ).toLocaleDateString('ko-KR')}
+                  </Text>
+                </View>
+              ) : null}
               <TouchableOpacity
-                style={styles.submitBtn}
+                style={[
+                  styles.submitBtn,
+                  profile.lastNicknameChangeAt &&
+                    Date.now() - profile.lastNicknameChangeAt < 30 * 24 * 60 * 60 * 1000 &&
+                    { backgroundColor: '#CCC' },
+                ]}
                 onPress={() => {
                   if (!editNickname.trim()) return;
-                  updateProfile({ ...profile, nickname: editNickname.trim() });
+                  if (editNickname.trim() === profile.nickname) {
+                    close('editProfile');
+                    return;
+                  }
+                  if (
+                    profile.lastNicknameChangeAt &&
+                    Date.now() - profile.lastNicknameChangeAt < 30 * 24 * 60 * 60 * 1000
+                  ) {
+                    Alert.alert(
+                      '변경 불가',
+                      '닉네임은 30일에 한 번만 변경할 수 있어요.',
+                    );
+                    return;
+                  }
+                  updateProfile({
+                    ...profile,
+                    nickname: editNickname.trim(),
+                    lastNicknameChangeAt: Date.now(),
+                  });
                   close('editProfile');
                 }}
               >
@@ -2054,98 +2338,50 @@ export default function App() {
                 <Text style={styles.label}>만나는 시간</Text>
                 {(() => {
                   const parsed = parseHHMM(form.meetupTime);
-                  const selH = parsed ? parsed.h : null;
-                  const selM = parsed ? parsed.min : 0;
-                  const setHour = (h) => {
+                  const nowDate = new Date();
+                  const selH = parsed ? parsed.h : nowDate.getHours();
+                  const selM = parsed
+                    ? parsed.min
+                    : Math.floor(nowDate.getMinutes() / 15) * 15;
+                  const updateTime = (h, m) => {
                     updateForm(
                       'meetupTime',
-                      `${String(h).padStart(2, '0')}:${String(selM).padStart(2, '0')}`,
+                      `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
                     );
                   };
-                  const setMin = (m) => {
-                    if (selH == null) {
-                      const nowDate = new Date();
-                      updateForm(
-                        'meetupTime',
-                        `${String(nowDate.getHours()).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
-                      );
-                    } else {
-                      updateForm(
-                        'meetupTime',
-                        `${String(selH).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
-                      );
-                    }
-                  };
+                  const hours = Array.from({ length: 24 }, (_, i) => i);
+                  const minutes = [0, 15, 30, 45];
                   return (
-                    <>
-                      <View style={styles.timeDisplayRow}>
-                        <Text style={styles.timeDisplayText}>
-                          {form.meetupTime || '미선택 (마감 +15분 자동)'}
+                    <View style={styles.wheelRow}>
+                      <WheelPicker
+                        items={hours}
+                        value={selH}
+                        onChange={(h) => updateTime(h, selM)}
+                      />
+                      <Text style={styles.wheelColonNew}>:</Text>
+                      <WheelPicker
+                        items={minutes}
+                        value={selM}
+                        onChange={(m) => updateTime(selH, m)}
+                      />
+                      <View style={styles.wheelMeta}>
+                        <Text style={styles.wheelMetaLabel}>
+                          {form.meetupTime || `${String(selH).padStart(2, '0')}:${String(selM).padStart(2, '0')} (자동)`}
                         </Text>
                         {form.meetupTime ? (
                           <TouchableOpacity
-                            style={styles.timePickerClear}
+                            style={styles.wheelClearBtn}
                             onPress={() => updateForm('meetupTime', '')}
                           >
-                            <Text style={{ color: '#888', fontSize: 12 }}>초기화</Text>
+                            <Text style={{ color: '#888', fontSize: 11 }}>초기화</Text>
                           </TouchableOpacity>
                         ) : null}
                       </View>
-
-                      <Text style={styles.timePickerSubLabel}>시</Text>
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.timeChipScroll}
-                      >
-                        {Array.from({ length: 24 }, (_, i) => i).map((h) => (
-                          <TouchableOpacity
-                            key={h}
-                            style={[
-                              styles.timeChip,
-                              selH === h && styles.timeChipOn,
-                            ]}
-                            onPress={() => setHour(h)}
-                          >
-                            <Text
-                              style={[
-                                styles.timeChipText,
-                                selH === h && styles.timeChipTextOn,
-                              ]}
-                            >
-                              {String(h).padStart(2, '0')}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-
-                      <Text style={styles.timePickerSubLabel}>분 (15분 단위)</Text>
-                      <View style={styles.chipRow}>
-                        {[0, 15, 30, 45].map((m) => (
-                          <TouchableOpacity
-                            key={m}
-                            style={[
-                              styles.timeChip,
-                              selM === m && form.meetupTime && styles.timeChipOn,
-                            ]}
-                            onPress={() => setMin(m)}
-                          >
-                            <Text
-                              style={[
-                                styles.timeChipText,
-                                selM === m && form.meetupTime && styles.timeChipTextOn,
-                              ]}
-                            >
-                              {String(m).padStart(2, '0')}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </>
+                    </View>
                   );
                 })()}
                 <Text style={styles.mapHint}>
-                  💡 마감보다 빠른 시각 선택 시 다음 날로 자동 이동돼요. 비워두면 마감 +15분 자동.
+                  💡 비워두면 마감 +15분 자동. 마감보다 빠른 시각이면 다음날로 이동돼요.
                 </Text>
 
                 <Text style={styles.label}>참여 인원</Text>
@@ -3202,6 +3438,83 @@ export default function App() {
                   </View>
                 ))}
 
+                <Text style={styles.label}>🏆 인기 호스트 랭킹 (주간)</Text>
+                {(() => {
+                  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+                  const scores = new Map();
+                  posts.forEach((p) => {
+                    if (!p.author) return;
+                    if ((p.createdAt || 0) < weekAgo) return;
+                    const cur = scores.get(p.author) || {
+                      hosted: 0,
+                      participants: 0,
+                      likes: 0,
+                    };
+                    cur.hosted += 1;
+                    cur.participants += (p.participants || []).length;
+                    (p.reviews || []).forEach((r) => {
+                      if (r.target === p.author && r.rating === 'like') cur.likes += 1;
+                    });
+                    scores.set(p.author, cur);
+                  });
+                  const ranked = Array.from(scores.entries())
+                    .map(([name, s]) => ({
+                      name,
+                      ...s,
+                      score: s.hosted * 1 + s.participants * 0.5 + s.likes * 2,
+                    }))
+                    .sort((a, b) => b.score - a.score)
+                    .slice(0, 10);
+                  if (ranked.length === 0) {
+                    return (
+                      <Text style={styles.emptyDescInline}>
+                        주간 호스트 데이터가 없어요.
+                      </Text>
+                    );
+                  }
+                  return ranked.map((r, i) => (
+                    <View key={r.name} style={styles.rankRow}>
+                      <Text style={styles.rankNum}>
+                        {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`}
+                      </Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.rankName}>{r.name}</Text>
+                        <Text style={styles.rankMeta}>
+                          호스팅 {r.hosted} · 참여자 {r.participants} · 👍 {r.likes}
+                        </Text>
+                      </View>
+                      <Text style={styles.rankScore}>{r.score.toFixed(1)}점</Text>
+                    </View>
+                  ));
+                })()}
+
+                <Text style={styles.label}>📨 최근 신고 (24시간)</Text>
+                {(() => {
+                  const recent = reportsAgainstMe.filter(
+                    (r) => r.ts > Date.now() - 24 * 60 * 60 * 1000,
+                  );
+                  if (recent.length === 0) {
+                    return (
+                      <Text style={styles.emptyDescInline}>
+                        나에 대한 최근 신고가 없어요. (참고: 어드민에선 본인 데이터만 보임)
+                      </Text>
+                    );
+                  }
+                  return recent.map((r) => (
+                    <View key={r.id} style={styles.adminPostRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.adminPostTitle}>
+                          {r.from} → {r.target}
+                        </Text>
+                        <Text style={styles.adminPostMeta}>{r.reasonLabel}</Text>
+                      </View>
+                      <Text style={styles.adminPostMeta}>
+                        {new Date(r.ts).toLocaleString('ko-KR')}
+                      </Text>
+                    </View>
+                  ));
+                })()}
+
                 <Text style={styles.label}>👥 사용자 활동</Text>
                 {(() => {
                   const allUsers = new Map();
@@ -3433,6 +3746,27 @@ export default function App() {
                         <Text style={styles.recordLab}>노쇼</Text>
                       </View>
                     </View>
+                    {!blocked && (
+                      <TouchableOpacity
+                        style={[
+                          styles.favStarBtn,
+                          isFavorite(viewingUser) && styles.favStarBtnOn,
+                        ]}
+                        onPress={() => toggleFavorite(viewingUser)}
+                      >
+                        <Text
+                          style={[
+                            styles.favStarText,
+                            isFavorite(viewingUser) && { color: '#FFF' },
+                          ]}
+                        >
+                          {isFavorite(viewingUser)
+                            ? '⭐ 즐겨찾기 해제'
+                            : '☆ 즐겨찾기 추가'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
                     {friend && !blocked && (
                       <TouchableOpacity
                         style={styles.chatStartBtn}
@@ -4285,6 +4619,99 @@ const styles = StyleSheet.create({
   timeChipOn: { backgroundColor: '#3182F6', borderColor: '#3182F6' },
   timeChipText: { fontSize: 14, color: '#666', fontWeight: '700' },
   timeChipTextOn: { color: '#FFF', fontWeight: '800' },
+  wheelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+    borderRadius: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+  },
+  wheelColonNew: { fontSize: 28, fontWeight: '900', color: '#3182F6', marginHorizontal: 4 },
+  wheelMeta: {
+    marginLeft: 'auto',
+    alignItems: 'flex-end',
+    paddingLeft: 8,
+  },
+  wheelMetaLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#3182F6',
+    marginBottom: 6,
+  },
+  wheelClearBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: '#FFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#EEE',
+  },
+  sortScroll: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4 },
+  sortChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#EEE',
+    marginRight: 8,
+  },
+  sortChipOn: { backgroundColor: '#3182F6', borderColor: '#3182F6' },
+  sortChipFavOn: { backgroundColor: '#F59E0B', borderColor: '#F59E0B' },
+  sortChipText: { fontSize: 12, color: '#666', fontWeight: '700' },
+  sortChipTextOn: { color: '#FFF', fontWeight: '800' },
+  favStarBtn: {
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 8,
+    backgroundColor: '#FFF8E1',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  favStarBtnOn: { backgroundColor: '#F59E0B', borderColor: '#F59E0B' },
+  favStarText: { color: '#92400E', fontWeight: '800', fontSize: 13 },
+  lockedNotice: {
+    backgroundColor: '#FFF8E1',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#F59E0B',
+  },
+  lockedNoticeText: { fontSize: 11, color: '#92400E', lineHeight: 16 },
+  notifPermBtn: {
+    backgroundColor: '#F0F4FF',
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#3182F6',
+  },
+  notifPermText: { color: '#3182F6', fontSize: 12, fontWeight: '800' },
+  rankRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF',
+    padding: 10,
+    borderRadius: 10,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: '#EEE',
+  },
+  rankNum: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#191F28',
+    marginRight: 12,
+    minWidth: 24,
+  },
+  rankName: { fontSize: 13, fontWeight: '800', color: '#191F28' },
+  rankMeta: { fontSize: 11, color: '#888', marginTop: 2 },
+  rankScore: { fontSize: 12, fontWeight: '900', color: '#3182F6' },
   disabledJoinButton: {
     paddingVertical: 16,
     borderRadius: 14,
