@@ -1367,9 +1367,10 @@ export default function App() {
     );
   };
 
-  const handleSendGroupMessage = () => {
-    if (!groupChatInput.trim() || !activePost) return;
-    if (containsBadWord(groupChatInput)) {
+  const handleSendGroupMessage = (overrideText) => {
+    const text = (overrideText ?? groupChatInput).trim();
+    if (!text || !activePost) return;
+    if (containsBadWord(text)) {
       showToast('욕설/비속어가 포함되어 있어요', 'error');
       return;
     }
@@ -1381,7 +1382,7 @@ export default function App() {
         {
           id: `gm-${Date.now()}`,
           user: profile.nickname,
-          text: groupChatInput.trim(),
+          text,
           ts: Date.now(),
         },
       ],
@@ -1390,13 +1391,14 @@ export default function App() {
     setGroupChatInput('');
   };
 
-  const handleAddComment = () => {
-    if (!commentInput.trim() || !activePost) return;
+  const handleAddComment = (overrideText) => {
+    const text = (overrideText ?? commentInput).trim();
+    if (!text || !activePost) return;
     if (isSuspended) {
       Alert.alert('정지 중', '신고 누적으로 댓글 작성이 제한됐어요.');
       return;
     }
-    if (containsBadWord(commentInput)) {
+    if (containsBadWord(text)) {
       showToast('욕설/비속어가 포함되어 있어요', 'error');
       return;
     }
@@ -1425,9 +1427,10 @@ export default function App() {
     open('chat');
   };
 
-  const handleSendChat = () => {
-    if (!chatInput.trim() || !activeChat) return;
-    if (containsBadWord(chatInput)) {
+  const handleSendChat = (overrideText) => {
+    const text = (overrideText ?? chatInput).trim();
+    if (!text || !activeChat) return;
+    if (containsBadWord(text)) {
       showToast('욕설/비속어가 포함되어 있어요', 'error');
       return;
     }
@@ -1461,7 +1464,7 @@ export default function App() {
     const newMsg = {
       id: `m-${Date.now()}`,
       sender: 'me',
-      text: chatInput.trim(),
+      text,
       ts: Date.now(),
     };
     const updated = { ...activeChat, messages: [...activeChat.messages, newMsg] };
@@ -1746,7 +1749,19 @@ export default function App() {
         style={[styles.container, darkMode && { backgroundColor: '#0F172A' }]}
       >
         <View style={[styles.topBar, darkMode && { backgroundColor: '#1E293B' }]}>
-          <Text style={styles.logoText}>📍 지금, 여기</Text>
+          <View style={styles.logoWrap}>
+            <View style={styles.logoBadge}>
+              <View style={styles.logoBadgeOuter}>
+                <View style={styles.logoBadgeInner} />
+              </View>
+            </View>
+            <View>
+              <Text style={styles.logoMain}>
+                지금<Text style={styles.logoComma}>·</Text>여기
+              </Text>
+              <Text style={styles.logoTagline}>내 동네 짧은 만남</Text>
+            </View>
+          </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <TouchableOpacity
               style={styles.bellBtn}
@@ -3529,13 +3544,14 @@ export default function App() {
                       <ScrollView
                         horizontal
                         showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={{ paddingVertical: 4 }}
+                        style={{ maxHeight: 36, marginBottom: 8 }}
+                        contentContainerStyle={{ alignItems: 'center' }}
                       >
                         {QUICK_REPLIES.map((q) => (
                           <TouchableOpacity
                             key={q}
                             style={styles.quickReplyChip}
-                            onPress={() => setCommentInput(q)}
+                            onPress={() => handleAddComment(q)}
                           >
                             <Text style={styles.quickReplyText}>{q}</Text>
                           </TouchableOpacity>
@@ -4919,13 +4935,14 @@ export default function App() {
                       <ScrollView
                         horizontal
                         showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={{ paddingVertical: 4 }}
+                        style={{ maxHeight: 36, marginBottom: 8 }}
+                        contentContainerStyle={{ alignItems: 'center' }}
                       >
                         {QUICK_REPLIES.map((q) => (
                           <TouchableOpacity
                             key={q}
                             style={styles.quickReplyChip}
-                            onPress={() => setChatInput(q)}
+                            onPress={() => handleSendChat(q)}
                           >
                             <Text style={styles.quickReplyText}>{q}</Text>
                           </TouchableOpacity>
@@ -4984,6 +5001,54 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF',
   },
   logoText: { fontSize: 20, fontWeight: '900', color: '#3182F6' },
+  logoWrap: { flexDirection: 'row', alignItems: 'center' },
+  logoBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#3182F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    shadowColor: '#3182F6',
+    shadowOpacity: 0.35,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  logoBadgeOuter: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 2.5,
+    borderColor: '#FFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoBadgeInner: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#FFF',
+  },
+  logoMain: {
+    fontSize: 19,
+    fontWeight: '900',
+    color: '#191F28',
+    letterSpacing: -0.6,
+    lineHeight: 22,
+  },
+  logoComma: {
+    color: '#FF5C5C',
+    marginHorizontal: 1,
+    fontSize: 19,
+  },
+  logoTagline: {
+    fontSize: 9,
+    color: '#888',
+    fontWeight: '600',
+    marginTop: 1,
+  },
   profileBox: { flexDirection: 'row', alignItems: 'center' },
   profileTextContainer: { alignItems: 'flex-end', marginRight: 10 },
   profileNickname: { fontSize: 13, fontWeight: '800', color: '#191F28' },
@@ -5782,14 +5847,16 @@ const styles = StyleSheet.create({
   cardHostRating: { fontSize: 12, color: '#92400E', fontWeight: '800' },
   quickReplyChip: {
     backgroundColor: '#F0F4FF',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
     marginRight: 6,
     borderWidth: 1,
     borderColor: '#E0E7FF',
+    height: 28,
+    justifyContent: 'center',
   },
-  quickReplyText: { fontSize: 12, color: '#3182F6', fontWeight: '700' },
+  quickReplyText: { fontSize: 11, color: '#3182F6', fontWeight: '700' },
   inviteBtn: {
     backgroundColor: '#FEE500',
     paddingVertical: 14,
