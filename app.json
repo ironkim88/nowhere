@@ -7,6 +7,10 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "scheme": "nowhereapp",
+    "splash": {
+      "backgroundColor": "#3182F6",
+      "resizeMode": "contain"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.ironkim88.nowhere",
