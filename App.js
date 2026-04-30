@@ -596,15 +596,10 @@ export default function App() {
 
   const [authUser, setAuthUser] = useState(null);
   useEffect(() => {
-    let seedDone = false;
     const unsub = subscribeToAuth((user) => {
       setAuthUser(user);
       setUid(user.uid);
       setAuthReady(true);
-      if (!seedDone) {
-        seedDone = true;
-        seedIfEmpty(seedPosts()).catch(() => {});
-      }
     });
     return () => unsub();
   }, []);
@@ -2720,24 +2715,7 @@ export default function App() {
                   );
                 })()}
 
-                <Text style={styles.label}>마감 시간 설정</Text>
-                <View style={styles.chipRow}>
-                  {[30, 45, 60, 90, 120].map((t) => (
-                    <TouchableOpacity
-                      key={t}
-                      style={[styles.chip, form.limitTime === t && styles.chipOn]}
-                      onPress={() => updateForm('limitTime', t)}
-                    >
-                      <Text
-                        style={[styles.chipTxt, form.limitTime === t && styles.chipTxtOn]}
-                      >
-                        {t}분
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <Text style={styles.label}>만나는 시간 (현재 +3시간 이내)</Text>
+                <Text style={styles.label}>시간 설정 (탭해서 변경)</Text>
                 {(() => {
                   const parsed = parseHHMM(form.meetupTime);
                   const fallback = new Date(Date.now() + 30 * 60 * 1000);
@@ -2748,6 +2726,11 @@ export default function App() {
                   const period = selH24 >= 12 ? 'PM' : 'AM';
                   let h12 = selH24 % 12;
                   if (h12 === 0) h12 = 12;
+                  const LIMITS = [30, 45, 60, 90, 120];
+                  const cycleLimit = () => {
+                    const idx = LIMITS.indexOf(form.limitTime);
+                    updateForm('limitTime', LIMITS[(idx + 1) % LIMITS.length]);
+                  };
 
                   const minMs = Date.now() + 5 * 60 * 1000;
                   const maxMs = Date.now() + MAX_MEETUP_AHEAD_HOURS * 60 * 60 * 1000;
@@ -2856,94 +2839,52 @@ export default function App() {
 
                   return (
                     <View>
-                      <View style={styles.btnPickerRow}>
-                        <View style={styles.btnPickerCol}>
-                          <TouchableOpacity
-                            style={[styles.btnPickerArrow, !canHourUp && styles.btnPickerDisabled]}
-                            onPress={() => stepHour(1)}
-                            disabled={!canHourUp}
-                          >
-                            <Text style={[styles.btnPickerArrowText, !canHourUp && {color:'#CCC'}]}>∧</Text>
-                          </TouchableOpacity>
-                          <View style={styles.btnPickerValue}>
-                            <Text style={styles.btnPickerValueText}>
-                              {String(h12).padStart(2, '0')}
-                            </Text>
-                          </View>
-                          <TouchableOpacity
-                            style={[styles.btnPickerArrow, !canHourDown && styles.btnPickerDisabled]}
-                            onPress={() => stepHour(-1)}
-                            disabled={!canHourDown}
-                          >
-                            <Text style={[styles.btnPickerArrowText, !canHourDown && {color:'#CCC'}]}>∨</Text>
+                      <View style={styles.compactRow}>
+                        <View style={styles.compactGroup}>
+                          <Text style={styles.compactLabel}>마감</Text>
+                          <TouchableOpacity style={styles.compactBox} onPress={cycleLimit}>
+                            <Text style={styles.compactValue}>{form.limitTime}분</Text>
                           </TouchableOpacity>
                         </View>
-
-                        <View style={styles.btnPickerCol}>
-                          <TouchableOpacity
-                            style={[styles.btnPickerArrow, !canMinUp && styles.btnPickerDisabled]}
-                            onPress={() => stepMin(1)}
-                            disabled={!canMinUp}
-                          >
-                            <Text style={[styles.btnPickerArrowText, !canMinUp && {color:'#CCC'}]}>∧</Text>
-                          </TouchableOpacity>
-                          <View style={styles.btnPickerValue}>
-                            <Text style={styles.btnPickerValueText}>
-                              {String(selM).padStart(2, '0')}
-                            </Text>
-                          </View>
-                          <TouchableOpacity
-                            style={[styles.btnPickerArrow, !canMinDown && styles.btnPickerDisabled]}
-                            onPress={() => stepMin(-1)}
-                            disabled={!canMinDown}
-                          >
-                            <Text style={[styles.btnPickerArrowText, !canMinDown && {color:'#CCC'}]}>∨</Text>
-                          </TouchableOpacity>
-                        </View>
-
-                        <View style={styles.btnPickerCol}>
-                          <TouchableOpacity
-                            style={[styles.btnPickerArrow, !canTogglePeriod && styles.btnPickerDisabled]}
-                            onPress={togglePeriod}
-                            disabled={!canTogglePeriod}
-                          >
-                            <Text style={[styles.btnPickerArrowText, !canTogglePeriod && {color:'#CCC'}]}>∧</Text>
-                          </TouchableOpacity>
-                          <View style={styles.btnPickerValue}>
-                            <Text style={styles.btnPickerValueText}>{period}</Text>
-                          </View>
-                          <TouchableOpacity
-                            style={[styles.btnPickerArrow, !canTogglePeriod && styles.btnPickerDisabled]}
-                            onPress={togglePeriod}
-                            disabled={!canTogglePeriod}
-                          >
-                            <Text style={[styles.btnPickerArrowText, !canTogglePeriod && {color:'#CCC'}]}>∨</Text>
-                          </TouchableOpacity>
-                        </View>
-
-                        <View style={styles.btnPickerMeta}>
-                          <Text style={styles.btnPickerMetaText}>
-                            {form.meetupTime || '(미설정 = 마감 +15분)'}
-                          </Text>
-                          {form.meetupTime ? (
+                        <View style={styles.compactDivider} />
+                        <View style={[styles.compactGroup, { flex: 1 }]}>
+                          <Text style={styles.compactLabel}>만나는 시간</Text>
+                          <View style={{ flexDirection: 'row' }}>
                             <TouchableOpacity
-                              style={styles.btnPickerClear}
-                              onPress={() => updateForm('meetupTime', '')}
+                              style={[styles.compactBox, !canHourUp && { opacity: 0.4 }]}
+                              onPress={() => canHourUp && stepHour(1)}
+                              disabled={!canHourUp}
                             >
-                              <Text style={{ color: '#888', fontSize: 11 }}>초기화</Text>
+                              <Text style={styles.compactValue}>{String(h12).padStart(2, '0')}</Text>
                             </TouchableOpacity>
-                          ) : null}
+                            <Text style={styles.compactColonNew}>:</Text>
+                            <TouchableOpacity
+                              style={[styles.compactBox, !canMinUp && { opacity: 0.4 }]}
+                              onPress={() => canMinUp && stepMin(1)}
+                              disabled={!canMinUp}
+                            >
+                              <Text style={styles.compactValue}>{String(selM).padStart(2, '0')}</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[
+                                styles.compactBox,
+                                { marginLeft: 6 },
+                                !canTogglePeriod && { opacity: 0.4 },
+                              ]}
+                              onPress={() => canTogglePeriod && togglePeriod()}
+                              disabled={!canTogglePeriod}
+                            >
+                              <Text style={styles.compactValue}>{period}</Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       </View>
                       <Text style={styles.mapHint}>
-                        💡 가능한 범위: {minLabel} ~ {maxLabel}
+                        💡 박스를 탭하면 다음 값으로 변경. 가능 범위 {minLabel}~{maxLabel}
                       </Text>
                     </View>
                   );
                 })()}
-                <Text style={styles.mapHint}>
-                  💡 비워두면 마감 +15분 자동. 마감보다 빠른 시각이면 다음날로 이동돼요.
-                </Text>
 
                 <Text style={styles.label}>참여 인원</Text>
                 <View style={styles.chipRow}>
@@ -3032,25 +2973,31 @@ export default function App() {
                 />
                 <Text style={styles.charCount}>{form.title.length}/50</Text>
 
-                <Text style={styles.label}>만날 장소 (텍스트)</Text>
+                <Text style={styles.label}>만날 장소</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="예) 여의나루역 2번 출구 앞"
                   value={form.location}
                   onChangeText={(t) => updateForm('location', t)}
                 />
-
-                <Text style={styles.label}>지도에서 위치 선택</Text>
+                <Text style={styles.mapHintTight}>
+                  📍 지도에서 핀을 찍거나 비워두면 내 위치 자동 등록
+                </Text>
                 <MapView
-                  height={220}
+                  height={200}
                   center={pickedLocation || userLocation}
                   selected={pickedLocation}
                   userLocation={userLocation}
                   onPick={(loc) => setPickedLocation(loc)}
                 />
-                <Text style={styles.mapHint}>
-                  지도를 탭하면 핀이 찍혀요. 비워두면 내 현재 위치로 등록돼요.
-                </Text>
+                {pickedLocation ? (
+                  <TouchableOpacity
+                    style={styles.locClearBtn}
+                    onPress={() => setPickedLocation(null)}
+                  >
+                    <Text style={styles.locClearBtnText}>📍 핀 제거 (내 위치 사용)</Text>
+                  </TouchableOpacity>
+                ) : null}
 
                 <Text style={styles.label}>대표 사진 (선택)</Text>
                 {pickedImage ? (
@@ -4121,6 +4068,37 @@ export default function App() {
                     </View>
                   ));
                 })()}
+
+                <Text style={styles.label}>🧹 시드 데이터 정리</Text>
+                <TouchableOpacity
+                  style={[styles.adminActionBtn, { backgroundColor: '#FF5C5C' }]}
+                  onPress={() => {
+                    const seeds = posts.filter((p) =>
+                      ['러너H', '육아맘A', '커피러버'].includes(p.author),
+                    );
+                    if (seeds.length === 0) {
+                      showToast('삭제할 시드 데이터 없음', 'info');
+                      return;
+                    }
+                    Alert.alert(
+                      '시드 데이터 삭제',
+                      `${seeds.length}개의 시드 모임을 삭제할까요?`,
+                      [
+                        { text: '취소', style: 'cancel' },
+                        {
+                          text: '삭제',
+                          style: 'destructive',
+                          onPress: async () => {
+                            await Promise.all(seeds.map((s) => deletePostFs(s.id)));
+                            showToast(`${seeds.length}개 삭제됨`, 'success');
+                          },
+                        },
+                      ],
+                    );
+                  }}
+                >
+                  <Text style={styles.adminActionBtnText}>🧹 시드 모임 모두 삭제</Text>
+                </TouchableOpacity>
 
                 <Text style={styles.label}>📢 공지사항 보내기</Text>
                 <TouchableOpacity
@@ -5944,6 +5922,59 @@ const styles = StyleSheet.create({
     borderColor: '#EEE',
   },
   btnPickerDisabled: { backgroundColor: '#F8F9FA', borderColor: '#EEE' },
+  compactRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F8F9FA',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 8,
+  },
+  compactGroup: { alignItems: 'flex-start' },
+  compactLabel: { fontSize: 11, color: '#888', fontWeight: '700', marginBottom: 6 },
+  compactBox: {
+    backgroundColor: '#FFF',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E8EB',
+    minWidth: 56,
+    alignItems: 'center',
+  },
+  compactValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#191F28',
+    letterSpacing: -0.5,
+  },
+  compactColonNew: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#3182F6',
+    marginHorizontal: 4,
+    alignSelf: 'center',
+    marginTop: 4,
+  },
+  compactDivider: {
+    width: 1,
+    backgroundColor: '#E5E8EB',
+    marginHorizontal: 14,
+    alignSelf: 'stretch',
+  },
+  mapHintTight: { fontSize: 11, color: '#888', marginTop: -4, marginBottom: 8 },
+  locClearBtn: {
+    backgroundColor: '#FFF',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E8EB',
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  locClearBtnText: { fontSize: 12, color: '#666', fontWeight: '700' },
   sortScroll: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4 },
   sortChip: {
     paddingHorizontal: 14,
