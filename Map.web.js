@@ -72,6 +72,7 @@ export default function Map({
   showRadius,
   radiusKm = 10,
   userLocation,
+  interactive = true,
 }) {
   const c = center || { lat: 37.5251, lng: 126.9249 };
   return (
@@ -79,7 +80,12 @@ export default function Map({
       <MapContainer
         center={[c.lat, c.lng]}
         zoom={zoom}
-        scrollWheelZoom
+        scrollWheelZoom={interactive}
+        dragging={interactive}
+        touchZoom={interactive}
+        doubleClickZoom={interactive}
+        zoomControl={interactive}
+        keyboard={interactive}
         style={{ height: '100%', width: '100%' }}
       >
         <TileLayer

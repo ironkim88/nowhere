@@ -2488,6 +2488,47 @@ export default function App() {
                 </View>
               </View>
 
+              <View style={styles.friendsListBox}>
+                <Text style={styles.friendsListLabel}>
+                  👫 내 친구 ({(profile.friends || []).length})
+                </Text>
+                {(profile.friends || []).length === 0 ? (
+                  <Text style={styles.emptyDescInline}>
+                    아직 친구가 없어요. 댓글이나 모집자 닉네임을 눌러 친구 추가해보세요.
+                  </Text>
+                ) : (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ paddingVertical: 4 }}
+                  >
+                    {(profile.friends || []).map((name) => (
+                      <TouchableOpacity
+                        key={name}
+                        style={styles.friendItem}
+                        onPress={() => {
+                          close('profile');
+                          openUserProfile(name);
+                        }}
+                      >
+                        <View>
+                          <Image
+                            source={{
+                              uri: `https://i.pravatar.cc/100?u=${encodeURIComponent(name)}`,
+                            }}
+                            style={styles.friendAvatar}
+                          />
+                          <View style={styles.friendOnlineDot} />
+                        </View>
+                        <Text style={styles.friendName} numberOfLines={1}>
+                          {name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                )}
+              </View>
+
               <View style={styles.settingsBox}>
                 {isGoogleUser(authUser) ? (
                   <View style={styles.googleConnectedBox}>
@@ -3025,24 +3066,29 @@ export default function App() {
                   value={form.location}
                   onChangeText={(t) => updateForm('location', t)}
                 />
-                <Text style={styles.mapHintTight}>
-                  📍 지도에서 핀을 찍거나 비워두면 내 위치 자동 등록
-                </Text>
-                <MapView
-                  height={200}
-                  center={pickedLocation || userLocation}
-                  selected={pickedLocation}
-                  userLocation={userLocation}
-                  onPick={(loc) => setPickedLocation(loc)}
-                />
-                {pickedLocation ? (
+                <View style={styles.locPickRow}>
                   <TouchableOpacity
-                    style={styles.locClearBtn}
-                    onPress={() => setPickedLocation(null)}
+                    style={styles.locPickBtn}
+                    onPress={() => open('pickLocation')}
                   >
-                    <Text style={styles.locClearBtnText}>📍 핀 제거 (내 위치 사용)</Text>
+                    <Text style={styles.locPickBtnText}>
+                      🗺 {pickedLocation ? '지도 위치 변경' : '지도에서 위치 선택 (선택)'}
+                    </Text>
                   </TouchableOpacity>
-                ) : null}
+                  {pickedLocation ? (
+                    <TouchableOpacity
+                      style={styles.locClearBtn}
+                      onPress={() => setPickedLocation(null)}
+                    >
+                      <Text style={styles.locClearBtnText}>📍 제거</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                <Text style={styles.mapHintTight}>
+                  {pickedLocation
+                    ? `✓ 지도 위치 선택됨 (${pickedLocation.lat.toFixed(4)}, ${pickedLocation.lng.toFixed(4)})`
+                    : '비워두면 내 현재 위치로 자동 등록돼요.'}
+                </Text>
 
                 <Text style={styles.label}>대표 사진 (선택)</Text>
                 {pickedImage ? (
@@ -3201,7 +3247,7 @@ export default function App() {
                     {activePost.lat != null && activePost.lng != null ? (
                       <View style={styles.detailMapWrapper}>
                         <MapView
-                          height={220}
+                          height={180}
                           center={{ lat: activePost.lat, lng: activePost.lng }}
                           markers={[
                             {
@@ -3224,7 +3270,17 @@ export default function App() {
                           })}
                           userLocation={userLocation}
                           zoom={15}
+                          interactive={false}
                         />
+                        <TouchableOpacity
+                          style={styles.detailMapBigBtn}
+                          onPress={() => {
+                            close('detail');
+                            open('mapView');
+                          }}
+                        >
+                          <Text style={styles.detailMapBigBtnText}>🗺 지도 크게 보기</Text>
+                        </TouchableOpacity>
                         {(() => {
                           const d = distanceKm(userLocation, {
                             lat: activePost.lat,
@@ -3907,6 +3963,52 @@ export default function App() {
                   ))
                 )}
               </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Pick Location Modal (large interactive map) */}
+        <Modal
+          visible={modal.pickLocation}
+          animationType="slide"
+          transparent
+          onRequestClose={() => close('pickLocation')}
+        >
+          <View style={styles.modalBg}>
+            <View style={styles.modalFull}>
+              <View style={styles.modalHead}>
+                <Text style={styles.modalTitle}>📍 위치 선택</Text>
+                <TouchableOpacity onPress={() => close('pickLocation')}>
+                  <Text style={styles.xBtn}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.mapHint}>
+                지도를 자유롭게 드래그/확대하고, 원하는 위치를 탭하면 핀이 찍혀요.
+              </Text>
+              <MapView
+                height={500}
+                center={pickedLocation || userLocation}
+                selected={pickedLocation}
+                userLocation={userLocation}
+                zoom={16}
+                onPick={(loc) => setPickedLocation(loc)}
+              />
+              <View style={{ flexDirection: 'row', marginTop: 12, gap: 8 }}>
+                <TouchableOpacity
+                  style={[styles.locClearBtn, { flex: 1 }]}
+                  onPress={() => setPickedLocation(null)}
+                >
+                  <Text style={styles.locClearBtnText}>핀 제거</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.submitBtn, { flex: 2, marginTop: 0 }]}
+                  onPress={() => close('pickLocation')}
+                >
+                  <Text style={styles.submitBtnText}>
+                    {pickedLocation ? '확인' : '닫기'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </Modal>
@@ -6072,6 +6174,38 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   locClearBtnText: { fontSize: 12, color: '#666', fontWeight: '700' },
+  locPickRow: { flexDirection: 'row', marginTop: 8, gap: 8 },
+  locPickBtn: {
+    flex: 1,
+    backgroundColor: '#F0F4FF',
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#3182F6',
+    borderStyle: 'dashed',
+    alignItems: 'center',
+  },
+  locPickBtnText: { color: '#3182F6', fontSize: 13, fontWeight: '700' },
+  detailMapBigBtn: {
+    backgroundColor: '#3182F6',
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  detailMapBigBtnText: { color: '#FFF', fontSize: 12, fontWeight: '800' },
+  friendsListBox: {
+    marginTop: 16,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    padding: 14,
+  },
+  friendsListLabel: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#191F28',
+    marginBottom: 10,
+  },
   sortScroll: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4 },
   sortChip: {
     paddingHorizontal: 14,
