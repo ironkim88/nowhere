@@ -2523,17 +2523,42 @@ export default function App() {
                   ))}
                 </View>
 
-                <Text style={styles.label}>만나는 시간</Text>
+                <Text style={styles.label}>만나는 시간 (현재 +3시간 이내)</Text>
                 {(() => {
                   const parsed = parseHHMM(form.meetupTime);
-                  const nowDate = new Date();
-                  const selH24 = parsed ? parsed.h : nowDate.getHours();
-                  const selM = parsed
-                    ? parsed.min
-                    : Math.floor(nowDate.getMinutes() / 15) * 15;
+                  const fallback = new Date(Date.now() + 30 * 60 * 1000);
+                  const fallbackM = Math.ceil(fallback.getMinutes() / 15) * 15;
+                  if (fallbackM === 60) fallback.setHours(fallback.getHours() + 1);
+                  const selH24 = parsed ? parsed.h : fallback.getHours();
+                  const selM = parsed ? parsed.min : (fallbackM === 60 ? 0 : fallbackM);
                   const period = selH24 >= 12 ? 'PM' : 'AM';
                   let h12 = selH24 % 12;
                   if (h12 === 0) h12 = 12;
+
+                  const minMs = Date.now() + 5 * 60 * 1000;
+                  const maxMs = Date.now() + MAX_MEETUP_AHEAD_HOURS * 60 * 60 * 1000;
+                  const targetMsFor = (h24, m) => {
+                    const d = new Date();
+                    d.setHours(h24, m, 0, 0);
+                    return d.getTime();
+                  };
+                  const canSet = (h24, m) => {
+                    const t = targetMsFor(h24, m);
+                    return t >= minMs && t <= maxMs;
+                  };
+
+                  const minLabel = (() => {
+                    const d = new Date(minMs);
+                    const mm = Math.ceil(d.getMinutes() / 15) * 15;
+                    if (mm === 60) d.setHours(d.getHours() + 1);
+                    return `${String(d.getHours()).padStart(2, '0')}:${String(mm === 60 ? 0 : mm).padStart(2, '0')}`;
+                  })();
+                  const maxLabel = (() => {
+                    const d = new Date(maxMs);
+                    const mm = Math.floor(d.getMinutes() / 15) * 15;
+                    return `${String(d.getHours()).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+                  })();
+
                   const updateTime = (h24, m) => {
                     updateForm(
                       'meetupTime',
@@ -2541,97 +2566,164 @@ export default function App() {
                     );
                   };
                   const stepHour = (delta) => {
-                    let next = h12 + delta;
-                    if (next > 12) next = 1;
-                    if (next < 1) next = 12;
-                    let h24 = period === 'AM'
-                      ? (next === 12 ? 0 : next)
-                      : (next === 12 ? 12 : next + 12);
-                    updateTime(h24, selM);
+                    for (let i = 0; i < 12; i++) {
+                      let next = h12 + delta * (i + 1);
+                      while (next > 12) next -= 12;
+                      while (next < 1) next += 12;
+                      const h24 = period === 'AM'
+                        ? (next === 12 ? 0 : next)
+                        : (next === 12 ? 12 : next + 12);
+                      if (canSet(h24, selM)) {
+                        updateTime(h24, selM);
+                        return;
+                      }
+                    }
                   };
                   const stepMin = (delta) => {
                     const minutes = [0, 15, 30, 45];
                     const idx = minutes.indexOf(selM);
-                    const nextIdx = (idx + delta + 4) % 4;
-                    updateTime(selH24, minutes[nextIdx]);
+                    for (let i = 1; i <= 4; i++) {
+                      const nextIdx = (idx + delta * i + 16) % 4;
+                      if (canSet(selH24, minutes[nextIdx])) {
+                        updateTime(selH24, minutes[nextIdx]);
+                        return;
+                      }
+                    }
                   };
                   const togglePeriod = () => {
                     const newH24 = (selH24 + 12) % 24;
-                    updateTime(newH24, selM);
+                    if (canSet(newH24, selM)) {
+                      updateTime(newH24, selM);
+                    }
                   };
+                  // Initialize meetupTime if empty and current default is valid
+                  // (don't auto-write — leave empty for "auto = deadline +15min")
+
+                  // Disabled state hints
+                  const canHourUp = (() => {
+                    for (let i = 1; i <= 12; i++) {
+                      let next = h12 + i;
+                      while (next > 12) next -= 12;
+                      const h24 = period === 'AM'
+                        ? (next === 12 ? 0 : next)
+                        : (next === 12 ? 12 : next + 12);
+                      if (canSet(h24, selM)) return true;
+                    }
+                    return false;
+                  })();
+                  const canHourDown = (() => {
+                    for (let i = 1; i <= 12; i++) {
+                      let next = h12 - i;
+                      while (next < 1) next += 12;
+                      const h24 = period === 'AM'
+                        ? (next === 12 ? 0 : next)
+                        : (next === 12 ? 12 : next + 12);
+                      if (canSet(h24, selM)) return true;
+                    }
+                    return false;
+                  })();
+                  const canMinUp = (() => {
+                    const minutes = [0, 15, 30, 45];
+                    const idx = minutes.indexOf(selM);
+                    for (let i = 1; i <= 4; i++) {
+                      if (canSet(selH24, minutes[(idx + i) % 4])) return true;
+                    }
+                    return false;
+                  })();
+                  const canMinDown = (() => {
+                    const minutes = [0, 15, 30, 45];
+                    const idx = minutes.indexOf(selM);
+                    for (let i = 1; i <= 4; i++) {
+                      if (canSet(selH24, minutes[(idx - i + 4) % 4])) return true;
+                    }
+                    return false;
+                  })();
+                  const canTogglePeriod = canSet((selH24 + 12) % 24, selM);
+
                   return (
-                    <View style={styles.btnPickerRow}>
-                      <View style={styles.btnPickerCol}>
-                        <TouchableOpacity
-                          style={styles.btnPickerArrow}
-                          onPress={() => stepHour(1)}
-                        >
-                          <Text style={styles.btnPickerArrowText}>∧</Text>
-                        </TouchableOpacity>
-                        <View style={styles.btnPickerValue}>
-                          <Text style={styles.btnPickerValueText}>
-                            {String(h12).padStart(2, '0')}
-                          </Text>
-                        </View>
-                        <TouchableOpacity
-                          style={styles.btnPickerArrow}
-                          onPress={() => stepHour(-1)}
-                        >
-                          <Text style={styles.btnPickerArrowText}>∨</Text>
-                        </TouchableOpacity>
-                      </View>
-
-                      <View style={styles.btnPickerCol}>
-                        <TouchableOpacity
-                          style={styles.btnPickerArrow}
-                          onPress={() => stepMin(1)}
-                        >
-                          <Text style={styles.btnPickerArrowText}>∧</Text>
-                        </TouchableOpacity>
-                        <View style={styles.btnPickerValue}>
-                          <Text style={styles.btnPickerValueText}>
-                            {String(selM).padStart(2, '0')}
-                          </Text>
-                        </View>
-                        <TouchableOpacity
-                          style={styles.btnPickerArrow}
-                          onPress={() => stepMin(-1)}
-                        >
-                          <Text style={styles.btnPickerArrowText}>∨</Text>
-                        </TouchableOpacity>
-                      </View>
-
-                      <View style={styles.btnPickerCol}>
-                        <TouchableOpacity
-                          style={styles.btnPickerArrow}
-                          onPress={togglePeriod}
-                        >
-                          <Text style={styles.btnPickerArrowText}>∧</Text>
-                        </TouchableOpacity>
-                        <View style={styles.btnPickerValue}>
-                          <Text style={styles.btnPickerValueText}>{period}</Text>
-                        </View>
-                        <TouchableOpacity
-                          style={styles.btnPickerArrow}
-                          onPress={togglePeriod}
-                        >
-                          <Text style={styles.btnPickerArrowText}>∨</Text>
-                        </TouchableOpacity>
-                      </View>
-
-                      <View style={styles.btnPickerMeta}>
-                        <Text style={styles.btnPickerMetaText}>
-                          {form.meetupTime || '(미설정 = 마감 +15분)'}
-                        </Text>
-                        {form.meetupTime ? (
+                    <View>
+                      <View style={styles.btnPickerRow}>
+                        <View style={styles.btnPickerCol}>
                           <TouchableOpacity
-                            style={styles.btnPickerClear}
-                            onPress={() => updateForm('meetupTime', '')}
+                            style={[styles.btnPickerArrow, !canHourUp && styles.btnPickerDisabled]}
+                            onPress={() => stepHour(1)}
+                            disabled={!canHourUp}
                           >
-                            <Text style={{ color: '#888', fontSize: 11 }}>초기화</Text>
+                            <Text style={[styles.btnPickerArrowText, !canHourUp && {color:'#CCC'}]}>∧</Text>
                           </TouchableOpacity>
-                        ) : null}
+                          <View style={styles.btnPickerValue}>
+                            <Text style={styles.btnPickerValueText}>
+                              {String(h12).padStart(2, '0')}
+                            </Text>
+                          </View>
+                          <TouchableOpacity
+                            style={[styles.btnPickerArrow, !canHourDown && styles.btnPickerDisabled]}
+                            onPress={() => stepHour(-1)}
+                            disabled={!canHourDown}
+                          >
+                            <Text style={[styles.btnPickerArrowText, !canHourDown && {color:'#CCC'}]}>∨</Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.btnPickerCol}>
+                          <TouchableOpacity
+                            style={[styles.btnPickerArrow, !canMinUp && styles.btnPickerDisabled]}
+                            onPress={() => stepMin(1)}
+                            disabled={!canMinUp}
+                          >
+                            <Text style={[styles.btnPickerArrowText, !canMinUp && {color:'#CCC'}]}>∧</Text>
+                          </TouchableOpacity>
+                          <View style={styles.btnPickerValue}>
+                            <Text style={styles.btnPickerValueText}>
+                              {String(selM).padStart(2, '0')}
+                            </Text>
+                          </View>
+                          <TouchableOpacity
+                            style={[styles.btnPickerArrow, !canMinDown && styles.btnPickerDisabled]}
+                            onPress={() => stepMin(-1)}
+                            disabled={!canMinDown}
+                          >
+                            <Text style={[styles.btnPickerArrowText, !canMinDown && {color:'#CCC'}]}>∨</Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.btnPickerCol}>
+                          <TouchableOpacity
+                            style={[styles.btnPickerArrow, !canTogglePeriod && styles.btnPickerDisabled]}
+                            onPress={togglePeriod}
+                            disabled={!canTogglePeriod}
+                          >
+                            <Text style={[styles.btnPickerArrowText, !canTogglePeriod && {color:'#CCC'}]}>∧</Text>
+                          </TouchableOpacity>
+                          <View style={styles.btnPickerValue}>
+                            <Text style={styles.btnPickerValueText}>{period}</Text>
+                          </View>
+                          <TouchableOpacity
+                            style={[styles.btnPickerArrow, !canTogglePeriod && styles.btnPickerDisabled]}
+                            onPress={togglePeriod}
+                            disabled={!canTogglePeriod}
+                          >
+                            <Text style={[styles.btnPickerArrowText, !canTogglePeriod && {color:'#CCC'}]}>∨</Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.btnPickerMeta}>
+                          <Text style={styles.btnPickerMetaText}>
+                            {form.meetupTime || '(미설정 = 마감 +15분)'}
+                          </Text>
+                          {form.meetupTime ? (
+                            <TouchableOpacity
+                              style={styles.btnPickerClear}
+                              onPress={() => updateForm('meetupTime', '')}
+                            >
+                              <Text style={{ color: '#888', fontSize: 11 }}>초기화</Text>
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
                       </View>
+                      <Text style={styles.mapHint}>
+                        💡 가능한 범위: {minLabel} ~ {maxLabel}
+                      </Text>
                     </View>
                   );
                 })()}
@@ -5072,6 +5164,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#EEE',
   },
+  btnPickerDisabled: { backgroundColor: '#F8F9FA', borderColor: '#EEE' },
   sortScroll: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4 },
   sortChip: {
     paddingHorizontal: 14,
