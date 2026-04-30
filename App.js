@@ -2527,38 +2527,105 @@ export default function App() {
                 {(() => {
                   const parsed = parseHHMM(form.meetupTime);
                   const nowDate = new Date();
-                  const selH = parsed ? parsed.h : nowDate.getHours();
+                  const selH24 = parsed ? parsed.h : nowDate.getHours();
                   const selM = parsed
                     ? parsed.min
                     : Math.floor(nowDate.getMinutes() / 15) * 15;
-                  const updateTime = (h, m) => {
+                  const period = selH24 >= 12 ? 'PM' : 'AM';
+                  let h12 = selH24 % 12;
+                  if (h12 === 0) h12 = 12;
+                  const updateTime = (h24, m) => {
                     updateForm(
                       'meetupTime',
-                      `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
+                      `${String(h24).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
                     );
                   };
-                  const hours = Array.from({ length: 24 }, (_, i) => i);
-                  const minutes = [0, 15, 30, 45];
+                  const stepHour = (delta) => {
+                    let next = h12 + delta;
+                    if (next > 12) next = 1;
+                    if (next < 1) next = 12;
+                    let h24 = period === 'AM'
+                      ? (next === 12 ? 0 : next)
+                      : (next === 12 ? 12 : next + 12);
+                    updateTime(h24, selM);
+                  };
+                  const stepMin = (delta) => {
+                    const minutes = [0, 15, 30, 45];
+                    const idx = minutes.indexOf(selM);
+                    const nextIdx = (idx + delta + 4) % 4;
+                    updateTime(selH24, minutes[nextIdx]);
+                  };
+                  const togglePeriod = () => {
+                    const newH24 = (selH24 + 12) % 24;
+                    updateTime(newH24, selM);
+                  };
                   return (
-                    <View style={styles.wheelRow}>
-                      <WheelPicker
-                        items={hours}
-                        value={selH}
-                        onChange={(h) => updateTime(h, selM)}
-                      />
-                      <Text style={styles.wheelColonNew}>:</Text>
-                      <WheelPicker
-                        items={minutes}
-                        value={selM}
-                        onChange={(m) => updateTime(selH, m)}
-                      />
-                      <View style={styles.wheelMeta}>
-                        <Text style={styles.wheelMetaLabel}>
-                          {form.meetupTime || `${String(selH).padStart(2, '0')}:${String(selM).padStart(2, '0')} (자동)`}
+                    <View style={styles.btnPickerRow}>
+                      <View style={styles.btnPickerCol}>
+                        <TouchableOpacity
+                          style={styles.btnPickerArrow}
+                          onPress={() => stepHour(1)}
+                        >
+                          <Text style={styles.btnPickerArrowText}>∧</Text>
+                        </TouchableOpacity>
+                        <View style={styles.btnPickerValue}>
+                          <Text style={styles.btnPickerValueText}>
+                            {String(h12).padStart(2, '0')}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.btnPickerArrow}
+                          onPress={() => stepHour(-1)}
+                        >
+                          <Text style={styles.btnPickerArrowText}>∨</Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      <View style={styles.btnPickerCol}>
+                        <TouchableOpacity
+                          style={styles.btnPickerArrow}
+                          onPress={() => stepMin(1)}
+                        >
+                          <Text style={styles.btnPickerArrowText}>∧</Text>
+                        </TouchableOpacity>
+                        <View style={styles.btnPickerValue}>
+                          <Text style={styles.btnPickerValueText}>
+                            {String(selM).padStart(2, '0')}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.btnPickerArrow}
+                          onPress={() => stepMin(-1)}
+                        >
+                          <Text style={styles.btnPickerArrowText}>∨</Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      <View style={styles.btnPickerCol}>
+                        <TouchableOpacity
+                          style={styles.btnPickerArrow}
+                          onPress={togglePeriod}
+                        >
+                          <Text style={styles.btnPickerArrowText}>∧</Text>
+                        </TouchableOpacity>
+                        <View style={styles.btnPickerValue}>
+                          <Text style={styles.btnPickerValueText}>{period}</Text>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.btnPickerArrow}
+                          onPress={togglePeriod}
+                        >
+                          <Text style={styles.btnPickerArrowText}>∨</Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      <View style={styles.btnPickerMeta}>
+                        <Text style={styles.btnPickerMetaText}>
+                          {form.meetupTime || '(미설정 = 마감 +15분)'}
                         </Text>
                         {form.meetupTime ? (
                           <TouchableOpacity
-                            style={styles.wheelClearBtn}
+                            style={styles.btnPickerClear}
                             onPress={() => updateForm('meetupTime', '')}
                           >
                             <Text style={{ color: '#888', fontSize: 11 }}>초기화</Text>
@@ -4946,6 +5013,61 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     backgroundColor: '#FFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#EEE',
+  },
+  btnPickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  btnPickerCol: { alignItems: 'center' },
+  btnPickerArrow: {
+    width: 56,
+    paddingVertical: 6,
+    backgroundColor: '#FFF',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#DDD',
+    alignItems: 'center',
+  },
+  btnPickerArrowText: {
+    fontSize: 16,
+    color: '#666',
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  btnPickerValue: {
+    width: 56,
+    paddingVertical: 10,
+    marginVertical: 4,
+    backgroundColor: '#FFF',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#DDD',
+    alignItems: 'center',
+  },
+  btnPickerValueText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#191F28',
+  },
+  btnPickerMeta: {
+    marginLeft: 'auto',
+    alignItems: 'flex-end',
+  },
+  btnPickerMetaText: {
+    fontSize: 12,
+    color: '#3182F6',
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  btnPickerClear: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: '#F8F9FA',
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#EEE',
