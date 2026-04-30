@@ -1409,7 +1409,7 @@ export default function App() {
         {
           id: `c-${Date.now()}`,
           user: profile.nickname,
-          text: commentInput.trim(),
+          text,
           ts: Date.now(),
         },
       ],
