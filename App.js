@@ -1539,6 +1539,21 @@ export default function App() {
       .sort((a, b) => b.deadlineMs - a.deadlineMs);
   }, [posts, now, profile.nickname]);
 
+  if (!authReady) {
+    return (
+      <SafeAreaView style={styles.splashContainer}>
+        <View style={styles.splashContent}>
+          <Text style={styles.splashEmoji}>📍</Text>
+          <Text style={styles.splashLogo}>지금, 여기</Text>
+          <Text style={styles.splashTagline}>내 동네 짧은 만남</Text>
+          <View style={styles.splashSpinner}>
+            <Text style={styles.splashSpinnerText}>·  ·  ·</Text>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView
       style={[styles.safeArea, darkMode && { backgroundColor: '#0F172A' }]}
@@ -1703,11 +1718,25 @@ export default function App() {
                 {visiblePosts.length === 0 ? (
                   <View style={styles.emptyState}>
                     <Text style={styles.emptyEmoji}>🌱</Text>
-                    <Text style={styles.emptyTitle}>아직 열린 모임이 없어요</Text>
-                    <Text style={styles.emptyDesc}>가장 먼저 새로운 모임을 열어보세요!</Text>
-                    <TouchableOpacity style={styles.emptyBtn} onPress={() => open('write')}>
-                      <Text style={styles.emptyBtnText}>모임 만들기</Text>
-                    </TouchableOpacity>
+                    <Text style={styles.emptyTitle}>
+                      {searchQuery
+                        ? '검색 결과가 없어요'
+                        : viewRadiusKm === 5
+                        ? '내 주변 모임이 아직 없어요'
+                        : '우리 동네 모임이 아직 없어요'}
+                    </Text>
+                    <Text style={styles.emptyDesc}>
+                      {searchQuery
+                        ? '다른 키워드로 검색해보세요.'
+                        : viewRadiusKm === 5
+                        ? '범위를 우리 동네 (10km)로 넓혀보거나, 첫 번째 모임을 만들어보세요!'
+                        : '가장 먼저 새로운 모임을 열어 동네를 깨워보세요!'}
+                    </Text>
+                    {!searchQuery && (
+                      <TouchableOpacity style={styles.emptyBtn} onPress={() => open('write')}>
+                        <Text style={styles.emptyBtnText}>+ 모임 만들기</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 ) : (
                   visiblePosts.map((post) => {
@@ -1750,15 +1779,33 @@ export default function App() {
                         <Text style={styles.cardTitle}>{post.title}</Text>
                         {(() => {
                           const rating = computeHostRating(posts, post.author);
+                          const isFav = (profile.favorites || []).includes(post.author);
                           return (
                             <View style={styles.cardHostRow}>
-                              <Text style={styles.cardCondition}>
-                                👫 {post.gender} · 🎂 {post.ages.join(', ')}
-                              </Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                                <Image
+                                  source={{
+                                    uri: `https://i.pravatar.cc/40?u=${encodeURIComponent(post.author)}`,
+                                  }}
+                                  style={styles.cardHostAvatar}
+                                />
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.cardHostName} numberOfLines={1}>
+                                    {post.author}
+                                    {isFav ? ' ⭐' : ''}
+                                  </Text>
+                                  <Text style={styles.cardCondition}>
+                                    👫 {post.gender} · 🎂 {post.ages.join(', ')}
+                                  </Text>
+                                </View>
+                              </View>
                               {rating ? (
-                                <Text style={styles.cardHostRating}>
-                                  ⭐ {rating.score} ({rating.total})
-                                </Text>
+                                <View style={styles.cardRatingPill}>
+                                  <Text style={styles.cardHostRating}>
+                                    ⭐ {rating.score}
+                                  </Text>
+                                  <Text style={styles.cardRatingCount}>({rating.total})</Text>
+                                </View>
                               ) : null}
                             </View>
                           );
@@ -4886,9 +4933,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginVertical: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F4F6F9',
   },
-  cardHostRating: { fontSize: 12, color: '#F59E0B', fontWeight: '800' },
+  cardHostRating: { fontSize: 12, color: '#92400E', fontWeight: '800' },
   quickReplyChip: {
     backgroundColor: '#F0F4FF',
     paddingHorizontal: 12,
@@ -4919,6 +4969,51 @@ const styles = StyleSheet.create({
   },
   kakaoLoginText: { color: '#92400E', fontWeight: '800', fontSize: 13 },
   kakaoLoginSub: { color: '#92400E', fontSize: 11, marginTop: 4 },
+  splashContainer: {
+    flex: 1,
+    backgroundColor: '#3182F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  splashContent: { alignItems: 'center' },
+  splashEmoji: { fontSize: 72, marginBottom: 16 },
+  splashLogo: {
+    fontSize: 36,
+    fontWeight: '900',
+    color: '#FFF',
+    letterSpacing: -1,
+  },
+  splashTagline: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.85)',
+    marginTop: 8,
+    fontWeight: '600',
+  },
+  splashSpinner: { marginTop: 32 },
+  splashSpinnerText: {
+    fontSize: 24,
+    color: '#FFF',
+    fontWeight: '900',
+    letterSpacing: 4,
+  },
+  cardHostAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginRight: 10,
+    backgroundColor: '#EEE',
+  },
+  cardHostName: { fontSize: 13, fontWeight: '700', color: '#191F28' },
+  cardRatingPill: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    backgroundColor: '#FFF8E1',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  cardRatingCount: { fontSize: 10, color: '#92400E', marginLeft: 2 },
   rankRow: {
     flexDirection: 'row',
     alignItems: 'center',
