@@ -5,15 +5,49 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "scheme": "nowhereapp",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.example.nowhere"
+      "bundleIdentifier": "com.ironkim88.nowhere",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "주변 모임을 찾기 위해 위치 정보가 필요해요.",
+        "NSCameraUsageDescription": "도착 인증 사진 촬영을 위해 카메라가 필요해요.",
+        "NSPhotoLibraryUsageDescription": "모임 사진을 첨부하기 위해 사진 라이브러리 접근이 필요해요."
+      }
     },
     "android": {
-      "package": "com.example.nowhere"
+      "package": "com.ironkim88.nowhere",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
-      "bundler": "metro"
-    }
+      "bundler": "metro",
+      "name": "지금, 여기",
+      "shortName": "지금여기",
+      "themeColor": "#3182F6",
+      "backgroundColor": "#FFFFFF",
+      "display": "standalone",
+      "orientation": "portrait"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "주변 모임을 찾기 위해 위치 정보가 필요해요."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "모임 사진 첨부를 위해 사진 라이브러리 접근이 필요해요.",
+          "cameraPermission": "도착 인증 사진 촬영을 위해 카메라가 필요해요."
+        }
+      ]
+    ]
   }
 }

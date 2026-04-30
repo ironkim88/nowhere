@@ -15,6 +15,9 @@ import {
   upsertProfile,
   seedIfEmpty,
 } from './firebase';
+import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
+import * as Clipboard from 'expo-clipboard';
 
 const STORAGE = {
   posts: '@nowhere_posts_v1',
@@ -331,17 +334,39 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.geolocation) {
+    (async () => {
       setLocationStatus('requesting');
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
+      try {
+        if (Platform.OS === 'web') {
+          if (typeof navigator !== 'undefined' && navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => {
+                setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+                setLocationStatus('granted');
+              },
+              () => setLocationStatus('denied'),
+              { timeout: 7000, maximumAge: 60000 },
+            );
+          } else {
+            setLocationStatus('denied');
+          }
+        } else {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status !== 'granted') {
+            setLocationStatus('denied');
+            return;
+          }
+          const pos = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
           setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
           setLocationStatus('granted');
-        },
-        () => setLocationStatus('denied'),
-        { timeout: 7000, maximumAge: 60000 },
-      );
-    }
+        }
+      } catch (e) {
+        console.warn('location failed', e);
+        setLocationStatus('denied');
+      }
+    })();
   }, []);
 
   // Anonymous auth
@@ -604,7 +629,7 @@ export default function App() {
     );
   };
 
-  const handleEnRoute = () => {
+  const handleEnRoute = async () => {
     if (!activePost) return;
     const apply = (lat, lng) => {
       const enroute = activePost.enroute || [];
@@ -618,84 +643,135 @@ export default function App() {
       updateActivePost(updated);
       Alert.alert('가는 중 인증', '현재 위치가 지도에 표시됐습니다.');
     };
-    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => apply(pos.coords.latitude, pos.coords.longitude),
-        () => apply(userLocation.lat, userLocation.lng),
-        { timeout: 7000, maximumAge: 30000 },
-      );
-    } else {
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof navigator !== 'undefined' && navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => apply(pos.coords.latitude, pos.coords.longitude),
+            () => apply(userLocation.lat, userLocation.lng),
+            { timeout: 7000, maximumAge: 30000 },
+          );
+        } else {
+          apply(userLocation.lat, userLocation.lng);
+        }
+      } else {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          apply(userLocation.lat, userLocation.lng);
+          return;
+        }
+        const pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        apply(pos.coords.latitude, pos.coords.longitude);
+      }
+    } catch (e) {
       apply(userLocation.lat, userLocation.lng);
     }
   };
 
-  const handleArrivalProof = () => {
+  const handleArrivalProof = async () => {
     if (!activePost) return;
-    if (Platform.OS !== 'web') {
-      Alert.alert('웹에서만 가능', '이미지 첨부는 현재 웹 미리보기에서만 지원해요.');
+    const apply = (uri) => {
+      const arrivals = activePost.arrivals || [];
+      const updated = {
+        ...activePost,
+        arrivals: [
+          ...arrivals.filter((a) => a.user !== profile.nickname),
+          { user: profile.nickname, photo: uri, ts: Date.now() },
+        ],
+      };
+      updateActivePost(updated);
+      Alert.alert('도착 인증 완료', '인증 사진이 등록되었습니다.');
+    };
+    if (Platform.OS === 'web') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.capture = 'environment';
+      input.onchange = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (file.size > 3 * 1024 * 1024) {
+          Alert.alert('파일이 큽니다', '3MB 이하 사진만 가능해요.');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (ev) => apply(ev.target.result);
+        reader.readAsDataURL(file);
+      };
+      input.click();
       return;
     }
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.capture = 'environment';
-    input.onchange = (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      if (file.size > 3 * 1024 * 1024) {
-        Alert.alert('파일이 큽니다', '3MB 이하 사진만 가능해요.');
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('권한 필요', '카메라 권한이 필요해요.');
         return;
       }
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const arrivals = activePost.arrivals || [];
-        const updated = {
-          ...activePost,
-          arrivals: [
-            ...arrivals.filter((a) => a.user !== profile.nickname),
-            { user: profile.nickname, photo: ev.target.result, ts: Date.now() },
-          ],
-        };
-        updateActivePost(updated);
-        Alert.alert('도착 인증 완료', '인증 사진이 등록되었습니다.');
-      };
-      reader.readAsDataURL(file);
-    };
-    input.click();
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: false,
+        quality: 0.7,
+        base64: true,
+      });
+      if (result.canceled) return;
+      const asset = result.assets?.[0];
+      if (!asset) return;
+      const uri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+      apply(uri);
+    } catch (e) {
+      Alert.alert('오류', '카메라를 열 수 없어요.');
+    }
   };
 
-  const handlePickImage = () => {
-    if (Platform.OS !== 'web') {
-      Alert.alert('웹에서만 가능', '이미지 첨부는 현재 웹 미리보기에서만 지원해요.');
+  const handlePickImage = async () => {
+    if (Platform.OS === 'web') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (file.size > 2 * 1024 * 1024) {
+          Alert.alert('파일이 큽니다', '2MB 이하 이미지만 가능해요.');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (ev) => setPickedImage(ev.target.result);
+        reader.readAsDataURL(file);
+      };
+      input.click();
       return;
     }
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.onchange = (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      if (file.size > 2 * 1024 * 1024) {
-        Alert.alert('파일이 큽니다', '2MB 이하 이미지만 가능해요.');
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('권한 필요', '사진 라이브러리 접근 권한이 필요해요.');
         return;
       }
-      const reader = new FileReader();
-      reader.onload = (ev) => setPickedImage(ev.target.result);
-      reader.readAsDataURL(file);
-    };
-    input.click();
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.7,
+        base64: true,
+      });
+      if (result.canceled) return;
+      const asset = result.assets?.[0];
+      if (!asset) return;
+      const uri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+      setPickedImage(uri);
+    } catch (e) {
+      Alert.alert('오류', '이미지를 가져올 수 없어요.');
+    }
   };
 
   const handleShare = async () => {
     if (!activePost) return;
     const text = `📍 ${activePost.title}\n· ${activePost.location}\n· ${formatTimeLeft(activePost.deadlineMs, now).text}\n\n[지금, 여기]에서 함께해요!`;
     try {
-      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
-        await navigator.clipboard.writeText(text);
-        Alert.alert('공유 링크 복사됨', '클립보드에 복사되었어요. 친구에게 붙여넣기 해주세요!');
-      } else {
-        Alert.alert('공유', text);
-      }
+      await Clipboard.setStringAsync(text);
+      Alert.alert('공유 링크 복사됨', '클립보드에 복사되었어요. 친구에게 붙여넣기 해주세요!');
     } catch (e) {
       Alert.alert('공유', text);
     }
