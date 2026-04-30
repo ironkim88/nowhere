@@ -1368,7 +1368,7 @@ export default function App() {
   };
 
   const handleSendGroupMessage = (overrideText) => {
-    const text = (overrideText ?? groupChatInput).trim();
+    const text = (typeof overrideText === 'string' ? overrideText : groupChatInput).trim();
     if (!text || !activePost) return;
     if (containsBadWord(text)) {
       showToast('욕설/비속어가 포함되어 있어요', 'error');
@@ -1392,7 +1392,7 @@ export default function App() {
   };
 
   const handleAddComment = (overrideText) => {
-    const text = (overrideText ?? commentInput).trim();
+    const text = (typeof overrideText === 'string' ? overrideText : commentInput).trim();
     if (!text || !activePost) return;
     if (isSuspended) {
       Alert.alert('정지 중', '신고 누적으로 댓글 작성이 제한됐어요.');
@@ -1428,7 +1428,7 @@ export default function App() {
   };
 
   const handleSendChat = (overrideText) => {
-    const text = (overrideText ?? chatInput).trim();
+    const text = (typeof overrideText === 'string' ? overrideText : chatInput).trim();
     if (!text || !activeChat) return;
     if (containsBadWord(text)) {
       showToast('욕설/비속어가 포함되어 있어요', 'error');
