@@ -156,4 +156,42 @@ export const subscribeToReportsAgainst = (nickname, onUpdate) =>
     },
   );
 
+export const subscribeToAnnouncements = (onUpdate) =>
+  onSnapshot(collection(db, 'announcements'), (snap) => {
+    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    onUpdate(list.sort((a, b) => (b.ts || 0) - (a.ts || 0)));
+  });
+
+export const postAnnouncement = async (title, body) => {
+  const id = `a-${Date.now()}`;
+  await setDoc(doc(db, 'announcements', id), {
+    title,
+    body,
+    ts: Date.now(),
+  });
+};
+
+export const subscribeToAllReports = (onUpdate) =>
+  onSnapshot(collection(db, 'reports'), (snap) => {
+    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    onUpdate(list.sort((a, b) => (b.ts || 0) - (a.ts || 0)));
+  });
+
+export const updateReportStatus = async (reportId, status, resolution) => {
+  await setDoc(
+    doc(db, 'reports', reportId),
+    { status, resolution: resolution || '', resolvedAt: Date.now() },
+    { merge: true },
+  );
+};
+
+export const searchUsersByNickname = async (queryText) => {
+  if (!queryText || queryText.length < 1) return [];
+  const snap = await getDocs(collection(db, 'users'));
+  const lower = queryText.toLowerCase();
+  return snap.docs
+    .map((d) => ({ uid: d.id, ...d.data() }))
+    .filter((u) => (u.nickname || '').toLowerCase().includes(lower));
+};
+
 export { serverTimestamp };

@@ -23,6 +23,11 @@ import {
   signInWithGoogle,
   signOutAndAnon,
   isGoogleUser,
+  subscribeToAnnouncements,
+  postAnnouncement,
+  subscribeToAllReports,
+  updateReportStatus,
+  searchUsersByNickname,
 } from './firebase';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -104,6 +109,40 @@ const CAPACITY_OPTIONS = [
 const DAILY_POST_LIMIT = 3;
 const MAX_MEETUP_AHEAD_HOURS = 3;
 const POST_AUTO_DELETE_DAYS = 5;
+
+const BAD_WORDS = [
+  '시발', '씨발', 'ㅅㅂ', 'ㅆㅂ', '병신', 'ㅂㅅ', '개새끼', '존나', '좆',
+  '꺼져', '죽어', '미친놈', '미친년', '닥쳐', 'fuck', 'shit', 'asshole',
+];
+const censorBadWords = (text) => {
+  if (!text) return text;
+  let out = text;
+  BAD_WORDS.forEach((bw) => {
+    const re = new RegExp(bw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    out = out.replace(re, (m) => m[0] + '*'.repeat(Math.max(1, m.length - 1)));
+  });
+  return out;
+};
+const containsBadWord = (text) => {
+  if (!text) return false;
+  return BAD_WORDS.some((bw) =>
+    new RegExp(bw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(text),
+  );
+};
+
+const computeResponseRate = (posts, hostNickname) => {
+  let total = 0;
+  let responded = 0;
+  posts.forEach((p) => {
+    if (p.author !== hostNickname) return;
+    (p.joinRequests || []).forEach((r) => {
+      total += 1;
+      if (r.status === 'accepted' || r.status === 'rejected') responded += 1;
+    });
+  });
+  if (total === 0) return null;
+  return Math.round((responded / total) * 100);
+};
 
 const QUICK_REPLIES = [
   '🏃‍♂️ 곧 도착해요',
@@ -464,8 +503,20 @@ export default function App() {
     profile: false, write: false, detail: false,
     report: false, chat: false, editProfile: false, userProfile: false,
     notifications: false, onboarding: false, mapView: false, pickLocation: false,
-    admin: false,
+    admin: false, groupChat: false, tutorial: false, announce: false,
   });
+  const [toast, setToast] = useState(null);
+  const showToast = (msg, kind = 'info') => {
+    setToast({ msg, kind });
+    setTimeout(() => setToast(null), 2200);
+  };
+  const [groupChatInput, setGroupChatInput] = useState('');
+  const [announcements, setAnnouncements] = useState([]);
+  const [allReports, setAllReports] = useState([]);
+  const [adminUserSearch, setAdminUserSearch] = useState('');
+  const [adminUserResults, setAdminUserResults] = useState([]);
+  const [announceTitle, setAnnounceTitle] = useState('');
+  const [announceBody, setAnnounceBody] = useState('');
   const open = (k) => setModal((m) => ({ ...m, [k]: true }));
   const close = (k) => setModal((m) => ({ ...m, [k]: false }));
 
@@ -550,15 +601,20 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const [c, n, ob] = await Promise.all([
+        const [c, n, ob, tut] = await Promise.all([
           AsyncStorage.getItem(STORAGE.chats),
           AsyncStorage.getItem(STORAGE.notifications),
           AsyncStorage.getItem(STORAGE.onboarded),
+          AsyncStorage.getItem('@nowhere_tutorial_done'),
         ]);
         if (c) setChats(JSON.parse(c));
         if (n) setNotifications(JSON.parse(n));
         if (!ob) {
           setModal((m) => ({ ...m, onboarding: true }));
+        } else if (!tut) {
+          setTimeout(() => {
+            setModal((m) => ({ ...m, tutorial: true }));
+          }, 800);
         }
       } catch (e) { console.warn('local load failed', e); }
     })();
@@ -591,6 +647,43 @@ export default function App() {
     const cutoff = Date.now() - POST_AUTO_DELETE_DAYS * 24 * 60 * 60 * 1000;
     deleteOldPosts(cutoff).catch(() => {});
   }, [authReady]);
+
+  // Subscribe to announcements
+  useEffect(() => {
+    if (!authReady) return;
+    const unsub = subscribeToAnnouncements(setAnnouncements);
+    return () => unsub();
+  }, [authReady]);
+
+  // Admin: subscribe to all reports
+  useEffect(() => {
+    if (!authReady || !isAdmin) {
+      setAllReports([]);
+      return;
+    }
+    const unsub = subscribeToAllReports(setAllReports);
+    return () => unsub();
+  }, [authReady, isAdmin]);
+
+  // Inject announcements into notifications
+  useEffect(() => {
+    if (announcements.length === 0) return;
+    setNotifications((prev) => {
+      const existingKeys = new Set(prev.map((n) => n.key));
+      const additions = announcements
+        .filter((a) => !existingKeys.has(`announce-${a.id}`))
+        .map((a) => ({
+          id: `n-ann-${a.id}`,
+          key: `announce-${a.id}`,
+          type: 'announce',
+          title: `📢 ${a.title}`,
+          body: a.body,
+          ts: a.ts,
+          read: false,
+        }));
+      return additions.length === 0 ? prev : [...additions, ...prev];
+    });
+  }, [announcements]);
 
   // Subscribe to profile (Firestore) — auto-create on first run
   useEffect(() => {
@@ -1274,10 +1367,37 @@ export default function App() {
     );
   };
 
+  const handleSendGroupMessage = () => {
+    if (!groupChatInput.trim() || !activePost) return;
+    if (containsBadWord(groupChatInput)) {
+      showToast('욕설/비속어가 포함되어 있어요', 'error');
+      return;
+    }
+    const msgs = activePost.groupMessages || [];
+    const updated = {
+      ...activePost,
+      groupMessages: [
+        ...msgs,
+        {
+          id: `gm-${Date.now()}`,
+          user: profile.nickname,
+          text: groupChatInput.trim(),
+          ts: Date.now(),
+        },
+      ],
+    };
+    updateActivePost(updated);
+    setGroupChatInput('');
+  };
+
   const handleAddComment = () => {
     if (!commentInput.trim() || !activePost) return;
     if (isSuspended) {
       Alert.alert('정지 중', '신고 누적으로 댓글 작성이 제한됐어요.');
+      return;
+    }
+    if (containsBadWord(commentInput)) {
+      showToast('욕설/비속어가 포함되어 있어요', 'error');
       return;
     }
     const updated = {
@@ -1307,6 +1427,10 @@ export default function App() {
 
   const handleSendChat = () => {
     if (!chatInput.trim() || !activeChat) return;
+    if (containsBadWord(chatInput)) {
+      showToast('욕설/비속어가 포함되어 있어요', 'error');
+      return;
+    }
     const target = activeChat.partner;
     if (!isFriend(target)) {
       Alert.alert(
@@ -1606,6 +1730,18 @@ export default function App() {
         barStyle={darkMode ? 'light-content' : 'dark-content'}
         backgroundColor={darkMode ? '#0F172A' : '#FFF'}
       />
+      {toast && (
+        <View
+          style={[
+            styles.toastContainer,
+            toast.kind === 'error' && { backgroundColor: '#FF5C5C' },
+            toast.kind === 'success' && { backgroundColor: '#22C55E' },
+          ]}
+          pointerEvents="none"
+        >
+          <Text style={styles.toastText}>{toast.msg}</Text>
+        </View>
+      )}
       <View
         style={[styles.container, darkMode && { backgroundColor: '#0F172A' }]}
       >
@@ -1843,14 +1979,26 @@ export default function App() {
                                   </Text>
                                 </View>
                               </View>
-                              {rating ? (
-                                <View style={styles.cardRatingPill}>
-                                  <Text style={styles.cardHostRating}>
-                                    ⭐ {rating.score}
-                                  </Text>
-                                  <Text style={styles.cardRatingCount}>({rating.total})</Text>
-                                </View>
-                              ) : null}
+                              {(() => {
+                                const respRate = computeResponseRate(posts, post.author);
+                                return (
+                                  <View style={{ alignItems: 'flex-end' }}>
+                                    {rating ? (
+                                      <View style={styles.cardRatingPill}>
+                                        <Text style={styles.cardHostRating}>
+                                          ⭐ {rating.score}
+                                        </Text>
+                                        <Text style={styles.cardRatingCount}>({rating.total})</Text>
+                                      </View>
+                                    ) : null}
+                                    {respRate != null ? (
+                                      <Text style={styles.cardRespRate}>
+                                        💬 응답 {respRate}%
+                                      </Text>
+                                    ) : null}
+                                  </View>
+                                );
+                              })()}
                             </View>
                           );
                         })()}
@@ -2971,6 +3119,20 @@ export default function App() {
                       </View>
                     </View>
 
+                    {(() => {
+                      const blockedInPost = (activePost.participants || []).filter((n) =>
+                        (profile.blocked || []).includes(n),
+                      );
+                      if (blockedInPost.length === 0) return null;
+                      return (
+                        <View style={styles.blockedWarn}>
+                          <Text style={styles.blockedWarnText}>
+                            ⚠️ 차단한 사용자({blockedInPost.join(', ')})가 참여 중이에요
+                          </Text>
+                        </View>
+                      );
+                    })()}
+
                     {activePost.image ? (
                       <Image
                         source={{ uri: activePost.image }}
@@ -3324,7 +3486,7 @@ export default function App() {
                                     {c.user}:{' '}
                                   </Text>
                                 </TouchableOpacity>
-                                <Text style={styles.commentText}>{c.text}</Text>
+                                <Text style={styles.commentText}>{censorBadWords(c.text)}</Text>
                               </View>
                               <View style={styles.commentReactions}>
                                 <TouchableOpacity
@@ -3462,6 +3624,23 @@ export default function App() {
                         )}
                       </View>
                     )}
+
+                    {(() => {
+                      const groupChatAvailable =
+                        (isJoined || isMine) &&
+                        Date.now() < activePost.deadlineMs + 12 * 60 * 60 * 1000;
+                      if (!groupChatAvailable) return null;
+                      return (
+                        <TouchableOpacity
+                          style={styles.groupChatBtn}
+                          onPress={() => open('groupChat')}
+                        >
+                          <Text style={styles.groupChatBtnText}>
+                            👥 참여자 단톡방 ({(activePost.groupMessages || []).length})
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })()}
 
                     <View style={{ flexDirection: 'row', marginTop: 16, gap: 8 }}>
                       <TouchableOpacity
@@ -3876,6 +4055,119 @@ export default function App() {
                   ));
                 })()}
 
+                <Text style={styles.label}>📢 공지사항 보내기</Text>
+                <TouchableOpacity
+                  style={styles.adminActionBtn}
+                  onPress={() => open('announce')}
+                >
+                  <Text style={styles.adminActionBtnText}>+ 새 공지 작성</Text>
+                </TouchableOpacity>
+                {announcements.slice(0, 3).map((a) => (
+                  <View key={a.id} style={styles.adminPostRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.adminPostTitle}>{a.title}</Text>
+                      <Text style={styles.adminPostMeta}>
+                        {new Date(a.ts).toLocaleString('ko-KR')}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+
+                <Text style={styles.label}>🔍 사용자 검색</Text>
+                <View style={{ flexDirection: 'row', marginBottom: 8 }}>
+                  <TextInput
+                    style={[styles.input, { flex: 1, marginRight: 8 }]}
+                    placeholder="닉네임으로 검색"
+                    value={adminUserSearch}
+                    onChangeText={setAdminUserSearch}
+                  />
+                  <TouchableOpacity
+                    style={styles.adminActionBtn}
+                    onPress={async () => {
+                      const results = await searchUsersByNickname(adminUserSearch);
+                      setAdminUserResults(results);
+                      if (results.length === 0) showToast('검색 결과 없음', 'info');
+                    }}
+                  >
+                    <Text style={styles.adminActionBtnText}>검색</Text>
+                  </TouchableOpacity>
+                </View>
+                {adminUserResults.map((u) => (
+                  <View key={u.uid} style={styles.adminUserRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.adminUserName}>{u.nickname}</Text>
+                      <Text style={styles.adminUserMeta}>
+                        UID: {u.uid.slice(0, 12)}... · {u.ageGroup} · {u.gender}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+
+                <Text style={styles.label}>
+                  📨 신고 처리 ({allReports.filter((r) => !r.status).length} 미처리)
+                </Text>
+                {allReports.length === 0 ? (
+                  <Text style={styles.emptyDescInline}>접수된 신고가 없어요.</Text>
+                ) : (
+                  allReports.slice(0, 20).map((r) => (
+                    <View key={r.id} style={styles.reportItemBox}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.adminPostTitle}>
+                          {r.from} → {r.target}
+                        </Text>
+                        <Text style={styles.adminPostMeta}>
+                          {r.reasonLabel} ·{' '}
+                          {new Date(r.ts).toLocaleString('ko-KR', {
+                            month: 'numeric',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.reportStatusTag,
+                            r.status === 'confirmed' && { color: '#FF5C5C' },
+                            r.status === 'dismissed' && { color: '#888' },
+                          ]}
+                        >
+                          {r.status === 'confirmed'
+                            ? '✓ 확인 (정지 권고)'
+                            : r.status === 'dismissed'
+                            ? '✗ 기각'
+                            : '⏳ 대기 중'}
+                        </Text>
+                      </View>
+                      {!r.status && (
+                        <View style={{ flexDirection: 'row' }}>
+                          <TouchableOpacity
+                            style={styles.adminMiniBtn}
+                            onPress={async () => {
+                              await updateReportStatus(r.id, 'confirmed');
+                              showToast('확인 처리됨', 'success');
+                            }}
+                          >
+                            <Text style={[styles.adminMiniBtnText, { color: '#FF5C5C' }]}>
+                              확인
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.adminMiniBtn}
+                            onPress={async () => {
+                              await updateReportStatus(r.id, 'dismissed');
+                              showToast('기각 처리됨', 'info');
+                            }}
+                          >
+                            <Text style={[styles.adminMiniBtnText, { color: '#888' }]}>
+                              기각
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+                  ))
+                )}
+
                 <Text style={styles.label}>📨 최근 신고 (24시간)</Text>
                 {(() => {
                   const recent = reportsAgainstMe.filter(
@@ -3928,6 +4220,203 @@ export default function App() {
               </ScrollView>
             </View>
           </View>
+        </Modal>
+
+        {/* Group Chat Modal (per post, 12h after deadline) */}
+        <Modal
+          visible={modal.groupChat}
+          animationType="slide"
+          transparent
+          onRequestClose={() => close('groupChat')}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.modalBg}
+          >
+            <View style={styles.modalFull}>
+              <View style={styles.modalHead}>
+                <Text style={styles.modalTitle}>
+                  👥 {activePost?.title || '단톡방'}
+                </Text>
+                <TouchableOpacity onPress={() => close('groupChat')}>
+                  <Text style={styles.xBtn}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              {activePost && (
+                <Text style={styles.mapHint}>
+                  마감 후 12시간까지 대화 가능 ·{' '}
+                  {(activePost.participants || []).length}명 참여
+                </Text>
+              )}
+              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }}>
+                {(activePost?.groupMessages || []).length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyEmoji}>💬</Text>
+                    <Text style={styles.emptyTitle}>아직 메시지가 없어요</Text>
+                    <Text style={styles.emptyDesc}>
+                      참여자끼리 자유롭게 대화해보세요.
+                    </Text>
+                  </View>
+                ) : (
+                  (activePost?.groupMessages || []).map((m) => {
+                    const mine = m.user === profile.nickname;
+                    return (
+                      <View
+                        key={m.id}
+                        style={[styles.msgRow, mine ? styles.msgRowMe : styles.msgRowThem]}
+                      >
+                        {!mine && (
+                          <TouchableOpacity onPress={() => openUserProfile(m.user)}>
+                            <Text style={styles.gmSender}>{m.user}</Text>
+                          </TouchableOpacity>
+                        )}
+                        <View
+                          style={[
+                            styles.msgBubble,
+                            mine ? styles.msgBubbleMe : styles.msgBubbleThem,
+                          ]}
+                        >
+                          <Text style={[styles.msgText, mine && { color: '#FFF' }]}>
+                            {censorBadWords(m.text)}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })
+                )}
+              </ScrollView>
+              <View style={styles.chatInputRow}>
+                <TextInput
+                  style={styles.chatInput}
+                  placeholder="단톡방 메시지..."
+                  value={groupChatInput}
+                  onChangeText={setGroupChatInput}
+                  onSubmitEditing={handleSendGroupMessage}
+                  returnKeyType="send"
+                />
+                <TouchableOpacity
+                  style={styles.chatSendBtn}
+                  onPress={handleSendGroupMessage}
+                >
+                  <Text style={styles.chatSendText}>전송</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        {/* Tutorial Overlay (first time only) */}
+        <Modal
+          visible={modal.tutorial}
+          animationType="fade"
+          transparent
+          onRequestClose={() => close('tutorial')}
+        >
+          <View style={styles.tutorialBg}>
+            <View style={styles.tutorialCard}>
+              <Text style={styles.tutorialEmoji}>👋</Text>
+              <Text style={styles.tutorialTitle}>지금, 여기 처음이시죠?</Text>
+              <View style={styles.tutorialStep}>
+                <Text style={styles.tutorialBullet}>📍</Text>
+                <Text style={styles.tutorialText}>
+                  내 주변 5km 안의 짧은 모임을 찾고 즉석에서 만나는 앱이에요.
+                </Text>
+              </View>
+              <View style={styles.tutorialStep}>
+                <Text style={styles.tutorialBullet}>➕</Text>
+                <Text style={styles.tutorialText}>
+                  하단 "만들기"로 30분~3시간 안의 모임을 열 수 있어요.
+                </Text>
+              </View>
+              <View style={styles.tutorialStep}>
+                <Text style={styles.tutorialBullet}>🚶</Text>
+                <Text style={styles.tutorialText}>
+                  참여 → 가는 중 → 도착 사진 인증 3단계로 신뢰를 쌓아요.
+                </Text>
+              </View>
+              <View style={styles.tutorialStep}>
+                <Text style={styles.tutorialBullet}>🌟</Text>
+                <Text style={styles.tutorialText}>
+                  종료 후 후기/별점으로 좋은 호스트를 만나보세요.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.submitBtn, { marginTop: 24 }]}
+                onPress={async () => {
+                  await AsyncStorage.setItem('@nowhere_tutorial_done', '1');
+                  close('tutorial');
+                }}
+              >
+                <Text style={styles.submitBtnText}>시작하기</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Admin: Announcement Compose */}
+        <Modal
+          visible={modal.announce}
+          animationType="slide"
+          transparent
+          onRequestClose={() => close('announce')}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.modalBg}
+          >
+            <View style={[styles.modalHalf, { height: '60%' }]}>
+              <View style={styles.modalHead}>
+                <Text style={styles.modalTitle}>📢 공지사항 보내기</Text>
+                <TouchableOpacity onPress={() => close('announce')}>
+                  <Text style={styles.xBtn}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView>
+                <Text style={styles.label}>제목</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="예) 12/24 새벽 점검 안내"
+                  value={announceTitle}
+                  onChangeText={setAnnounceTitle}
+                  maxLength={50}
+                />
+                <Text style={styles.label}>내용</Text>
+                <TextInput
+                  style={[styles.input, styles.inputMultiline]}
+                  placeholder="공지 내용 입력"
+                  value={announceBody}
+                  onChangeText={setAnnounceBody}
+                  multiline
+                  numberOfLines={4}
+                  maxLength={300}
+                  textAlignVertical="top"
+                />
+                <TouchableOpacity
+                  style={styles.submitBtn}
+                  onPress={async () => {
+                    if (!announceTitle.trim() || !announceBody.trim()) {
+                      showToast('제목과 내용을 입력해주세요', 'error');
+                      return;
+                    }
+                    try {
+                      await postAnnouncement(
+                        announceTitle.trim(),
+                        announceBody.trim(),
+                      );
+                      showToast('공지 전송 완료', 'success');
+                      setAnnounceTitle('');
+                      setAnnounceBody('');
+                      close('announce');
+                    } catch (e) {
+                      showToast('전송 실패', 'error');
+                    }
+                  }}
+                >
+                  <Text style={styles.submitBtnText}>모든 사용자에게 보내기</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         {/* Request Action (Accept / Reject with message) */}
@@ -4219,6 +4708,69 @@ export default function App() {
                         <Text style={styles.chatStartBtnText}>💬 1:1 채팅 시작</Text>
                       </TouchableOpacity>
                     )}
+
+                    {(() => {
+                      const hostPosts = posts.filter((p) => p.author === viewingUser);
+                      const reviewsReceived = posts
+                        .flatMap((p) => p.reviews || [])
+                        .filter((r) => r.target === viewingUser);
+                      const likes = reviewsReceived.filter((r) => r.rating === 'like').length;
+                      const dislikes = reviewsReceived.filter((r) => r.rating === 'dislike').length;
+                      const respRate = computeResponseRate(posts, viewingUser);
+                      return (
+                        <View style={styles.hostStatsBox}>
+                          <View style={styles.hostStatItem}>
+                            <Text style={styles.hostStatNum}>{hostPosts.length}</Text>
+                            <Text style={styles.hostStatLab}>호스팅</Text>
+                          </View>
+                          <View style={styles.hostStatItem}>
+                            <Text style={[styles.hostStatNum, { color: '#22C55E' }]}>👍{likes}</Text>
+                            <Text style={styles.hostStatLab}>좋아요</Text>
+                          </View>
+                          <View style={styles.hostStatItem}>
+                            <Text style={[styles.hostStatNum, { color: '#FF5C5C' }]}>👎{dislikes}</Text>
+                            <Text style={styles.hostStatLab}>별로</Text>
+                          </View>
+                          {respRate != null && (
+                            <View style={styles.hostStatItem}>
+                              <Text style={[styles.hostStatNum, { color: '#3182F6' }]}>{respRate}%</Text>
+                              <Text style={styles.hostStatLab}>응답률</Text>
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })()}
+
+                    {(() => {
+                      const hostPosts = posts.filter((p) => p.author === viewingUser);
+                      if (hostPosts.length === 0) return null;
+                      return (
+                        <View style={{ marginTop: 12 }}>
+                          <Text style={styles.label}>이 분의 모임</Text>
+                          {hostPosts.slice(0, 5).map((p) => {
+                            const t = formatTimeLeft(p.deadlineMs, now);
+                            return (
+                              <TouchableOpacity
+                                key={p.id}
+                                style={styles.hostPostItem}
+                                onPress={() => {
+                                  close('userProfile');
+                                  setActivePost(p);
+                                  open('detail');
+                                }}
+                              >
+                                <Text style={styles.hostPostTitle} numberOfLines={1}>
+                                  {p.title}
+                                </Text>
+                                <Text style={styles.hostPostMeta}>
+                                  {p.category} · {t.text}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      );
+                    })()}
 
                     <View style={styles.userActionRow}>
                       <TouchableOpacity
@@ -5357,6 +5909,128 @@ const styles = StyleSheet.create({
     borderColor: '#16A34A',
   },
   googleSignOutText: { color: '#16A34A', fontSize: 11, fontWeight: '800' },
+  toastContainer: {
+    position: 'absolute',
+    top: 60,
+    left: 20,
+    right: 20,
+    backgroundColor: '#191F28',
+    padding: 14,
+    borderRadius: 12,
+    zIndex: 1000,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+    alignItems: 'center',
+  },
+  toastText: { color: '#FFF', fontSize: 14, fontWeight: '700' },
+  cardRespRate: {
+    fontSize: 11,
+    color: '#22C55E',
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  blockedWarn: {
+    backgroundColor: '#FFE5E5',
+    padding: 10,
+    borderRadius: 10,
+    marginTop: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#FF5C5C',
+  },
+  blockedWarnText: { fontSize: 12, color: '#FF5C5C', fontWeight: '700' },
+  hostStatsBox: {
+    flexDirection: 'row',
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 16,
+    justifyContent: 'space-around',
+  },
+  hostStatItem: { alignItems: 'center' },
+  hostStatNum: { fontSize: 16, fontWeight: '900', color: '#191F28' },
+  hostStatLab: { fontSize: 10, color: '#888', marginTop: 2 },
+  hostPostItem: {
+    backgroundColor: '#F8F9FA',
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 6,
+  },
+  hostPostTitle: { fontSize: 13, fontWeight: '700', color: '#191F28' },
+  hostPostMeta: { fontSize: 11, color: '#888', marginTop: 2 },
+  groupChatBtn: {
+    backgroundColor: '#22C55E',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  groupChatBtnText: { color: '#FFF', fontWeight: '800', fontSize: 14 },
+  gmSender: {
+    fontSize: 11,
+    color: '#3182F6',
+    fontWeight: '700',
+    marginBottom: 2,
+    paddingHorizontal: 8,
+  },
+  tutorialBg: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  tutorialCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 24,
+    padding: 28,
+  },
+  tutorialEmoji: { fontSize: 48, textAlign: 'center', marginBottom: 12 },
+  tutorialTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    textAlign: 'center',
+    marginBottom: 20,
+    color: '#191F28',
+  },
+  tutorialStep: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 14,
+  },
+  tutorialBullet: { fontSize: 22, marginRight: 12, marginTop: -2 },
+  tutorialText: { flex: 1, fontSize: 13, color: '#333', lineHeight: 20 },
+  adminActionBtn: {
+    backgroundColor: '#3182F6',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  adminActionBtnText: { color: '#FFF', fontSize: 12, fontWeight: '800' },
+  reportItemBox: {
+    flexDirection: 'row',
+    backgroundColor: '#FFF',
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: '#EEE',
+    alignItems: 'center',
+  },
+  reportStatusTag: { fontSize: 11, fontWeight: '700', color: '#F59E0B', marginTop: 4 },
+  adminMiniBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    marginLeft: 4,
+    borderWidth: 1,
+    borderColor: '#EEE',
+  },
+  adminMiniBtnText: { fontSize: 11, fontWeight: '800' },
   rankRow: {
     flexDirection: 'row',
     alignItems: 'center',
