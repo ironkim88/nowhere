@@ -1574,33 +1574,6 @@ export default function App() {
                 )}
               </View>
 
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.filterScroll}
-              >
-                <TouchableOpacity
-                  style={[styles.filterChip, !filterCategory && styles.filterChipOn]}
-                  onPress={() => setFilterCategory(null)}
-                >
-                  <Text style={[styles.filterChipText, !filterCategory && styles.filterChipTextOn]}>
-                    전체
-                  </Text>
-                </TouchableOpacity>
-                {CATEGORIES.map((cat) => (
-                  <TouchableOpacity
-                    key={cat}
-                    style={[styles.filterChip, filterCategory === cat && styles.filterChipOn]}
-                    onPress={() => setFilterCategory(filterCategory === cat ? null : cat)}
-                  >
-                    <Text
-                      style={[styles.filterChipText, filterCategory === cat && styles.filterChipTextOn]}
-                    >
-                      {cat}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
 
               <View style={styles.radiusToggleRow}>
                 <TouchableOpacity
@@ -1637,51 +1610,6 @@ export default function App() {
                 </TouchableOpacity>
               </View>
 
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.sortScroll}
-              >
-                {[
-                  { id: 'deadline', label: '⏰ 임박순' },
-                  { id: 'distance', label: '📍 가까운 순' },
-                  { id: 'newest', label: '🆕 새 모임' },
-                ].map((opt) => (
-                  <TouchableOpacity
-                    key={opt.id}
-                    style={[
-                      styles.sortChip,
-                      sortMode === opt.id && styles.sortChipOn,
-                    ]}
-                    onPress={() => setSortMode(opt.id)}
-                  >
-                    <Text
-                      style={[
-                        styles.sortChipText,
-                        sortMode === opt.id && styles.sortChipTextOn,
-                      ]}
-                    >
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-                <TouchableOpacity
-                  style={[
-                    styles.sortChip,
-                    favoritesOnly && styles.sortChipFavOn,
-                  ]}
-                  onPress={() => setFavoritesOnly(!favoritesOnly)}
-                >
-                  <Text
-                    style={[
-                      styles.sortChipText,
-                      favoritesOnly && { color: '#FFF', fontWeight: '800' },
-                    ]}
-                  >
-                    {favoritesOnly ? '⭐ 즐겨찾기 ON' : '☆ 즐겨찾기'}
-                  </Text>
-                </TouchableOpacity>
-              </ScrollView>
 
               <View style={styles.header}>
                 <Text style={styles.headerTitle}>
