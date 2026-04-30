@@ -1246,7 +1246,7 @@ export default function App() {
         unread: 0,
         messages: [],
       };
-      setChats([chat, ...chats]);
+      setChats((prev) => [chat, ...prev]);
     }
     close('userProfile');
     setActiveChat(chat);
@@ -1291,7 +1291,7 @@ export default function App() {
     if (!activePost) return;
     const updated = {
       ...activePost,
-      comments: activePost.comments.map((c) => {
+      comments: (activePost.comments || []).map((c) => {
         if (c.id !== commentId) return c;
         const reactions = { ...(c.reactions || {}) };
         if (reactions[profile.nickname] === type) {
@@ -1405,7 +1405,7 @@ export default function App() {
     const updated = {
       ...activePost,
       comments: [
-        ...activePost.comments,
+        ...(activePost.comments || []),
         {
           id: `c-${Date.now()}`,
           user: profile.nickname,
@@ -1422,7 +1422,7 @@ export default function App() {
   const openChat = (chat) => {
     setActiveChat(chat);
     if (chat.unread > 0) {
-      setChats(chats.map((c) => (c.id === chat.id ? { ...c, unread: 0 } : c)));
+      setChats((prev) => prev.map((c) => (c.id === chat.id ? { ...c, unread: 0 } : c)));
     }
     open('chat');
   };
@@ -1468,7 +1468,7 @@ export default function App() {
       ts: Date.now(),
     };
     const updated = { ...activeChat, messages: [...activeChat.messages, newMsg] };
-    setChats(chats.map((c) => (c.id === updated.id ? updated : c)));
+    setChats((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
     setActiveChat(updated);
     setChatInput('');
 
@@ -2041,7 +2041,7 @@ export default function App() {
                               👥 {(post.participants || []).length}
                             </Text>
                             <Text style={styles.commentCount}>
-                              💬 {post.comments.length}
+                              💬 {(post.comments || []).length}
                             </Text>
                           </View>
                         </View>
@@ -3472,11 +3472,11 @@ export default function App() {
                     })()}
 
                     <View style={styles.commentBox}>
-                      <Text style={styles.label}>실시간 소통 ({activePost.comments.length})</Text>
-                      {activePost.comments.length === 0 ? (
+                      <Text style={styles.label}>실시간 소통 ({(activePost.comments || []).length})</Text>
+                      {(activePost.comments || []).length === 0 ? (
                         <Text style={styles.emptyDescInline}>첫 댓글을 남겨보세요!</Text>
                       ) : (
-                        activePost.comments.map((c) => {
+                        (activePost.comments || []).map((c) => {
                           const reactions = c.reactions || {};
                           const myReaction = reactions[profile.nickname];
                           const likes = Object.values(reactions).filter(
@@ -4000,7 +4000,7 @@ export default function App() {
                       <Text style={styles.adminPostMeta}>
                         {p.author} · 👥 {(p.participants || []).length}
                         {p.capacity != null ? `/${p.capacity}` : ''} · 💬{' '}
-                        {p.comments.length}
+                        {(p.comments || []).length}
                       </Text>
                     </View>
                     <TouchableOpacity
