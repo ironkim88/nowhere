@@ -2051,66 +2051,101 @@ export default function App() {
                   ))}
                 </View>
 
-                <Text style={styles.label}>만나는 시간 (비우면 마감 +15분 자동)</Text>
-                {Platform.OS === 'web' ? (
-                  <View style={styles.timePickerWrap}>
-                    <input
-                      type="time"
-                      value={form.meetupTime}
-                      onChange={(e) => updateForm('meetupTime', e.target.value)}
-                      style={{
-                        flex: 1,
-                        backgroundColor: '#F8F9FA',
-                        padding: 14,
-                        borderRadius: 12,
-                        fontSize: 14,
-                        border: 'none',
-                        outline: 'none',
-                        fontFamily: 'inherit',
-                        color: '#191F28',
-                      }}
-                    />
-                    {form.meetupTime ? (
-                      <TouchableOpacity
-                        onPress={() => updateForm('meetupTime', '')}
-                        style={styles.timePickerClear}
+                <Text style={styles.label}>만나는 시간</Text>
+                {(() => {
+                  const parsed = parseHHMM(form.meetupTime);
+                  const selH = parsed ? parsed.h : null;
+                  const selM = parsed ? parsed.min : 0;
+                  const setHour = (h) => {
+                    updateForm(
+                      'meetupTime',
+                      `${String(h).padStart(2, '0')}:${String(selM).padStart(2, '0')}`,
+                    );
+                  };
+                  const setMin = (m) => {
+                    if (selH == null) {
+                      const nowDate = new Date();
+                      updateForm(
+                        'meetupTime',
+                        `${String(nowDate.getHours()).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
+                      );
+                    } else {
+                      updateForm(
+                        'meetupTime',
+                        `${String(selH).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
+                      );
+                    }
+                  };
+                  return (
+                    <>
+                      <View style={styles.timeDisplayRow}>
+                        <Text style={styles.timeDisplayText}>
+                          {form.meetupTime || '미선택 (마감 +15분 자동)'}
+                        </Text>
+                        {form.meetupTime ? (
+                          <TouchableOpacity
+                            style={styles.timePickerClear}
+                            onPress={() => updateForm('meetupTime', '')}
+                          >
+                            <Text style={{ color: '#888', fontSize: 12 }}>초기화</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+
+                      <Text style={styles.timePickerSubLabel}>시</Text>
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.timeChipScroll}
                       >
-                        <Text style={{ color: '#888' }}>초기화</Text>
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
-                ) : (
-                  <TextInput
-                    style={styles.input}
-                    placeholder="예) 19:00, 21:30"
-                    value={form.meetupTime}
-                    onChangeText={(t) => updateForm('meetupTime', t)}
-                    maxLength={5}
-                  />
-                )}
-                <View style={styles.timeQuickChips}>
-                  {['18:00', '19:00', '20:00', '21:00', '22:00'].map((t) => (
-                    <TouchableOpacity
-                      key={t}
-                      style={[
-                        styles.timeQuickChip,
-                        form.meetupTime === t && styles.timeQuickChipOn,
-                      ]}
-                      onPress={() => updateForm('meetupTime', t)}
-                    >
-                      <Text
-                        style={[
-                          styles.timeQuickChipText,
-                          form.meetupTime === t && { color: '#FFF', fontWeight: '800' },
-                        ]}
-                      >
-                        {t}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                        {Array.from({ length: 24 }, (_, i) => i).map((h) => (
+                          <TouchableOpacity
+                            key={h}
+                            style={[
+                              styles.timeChip,
+                              selH === h && styles.timeChipOn,
+                            ]}
+                            onPress={() => setHour(h)}
+                          >
+                            <Text
+                              style={[
+                                styles.timeChipText,
+                                selH === h && styles.timeChipTextOn,
+                              ]}
+                            >
+                              {String(h).padStart(2, '0')}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+
+                      <Text style={styles.timePickerSubLabel}>분 (15분 단위)</Text>
+                      <View style={styles.chipRow}>
+                        {[0, 15, 30, 45].map((m) => (
+                          <TouchableOpacity
+                            key={m}
+                            style={[
+                              styles.timeChip,
+                              selM === m && form.meetupTime && styles.timeChipOn,
+                            ]}
+                            onPress={() => setMin(m)}
+                          >
+                            <Text
+                              style={[
+                                styles.timeChipText,
+                                selM === m && form.meetupTime && styles.timeChipTextOn,
+                              ]}
+                            >
+                              {String(m).padStart(2, '0')}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </>
+                  );
+                })()}
                 <Text style={styles.mapHint}>
-                  💡 마감보다 빠른 시각 선택 시 다음 날로 자동 이동돼요.
+                  💡 마감보다 빠른 시각 선택 시 다음 날로 자동 이동돼요. 비워두면 마감 +15분 자동.
                 </Text>
 
                 <Text style={styles.label}>참여 인원</Text>
@@ -4216,6 +4251,40 @@ const styles = StyleSheet.create({
   },
   timeQuickChipOn: { backgroundColor: '#3182F6', borderColor: '#3182F6' },
   timeQuickChipText: { fontSize: 12, color: '#666' },
+  timeDisplayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F0F4FF',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  timeDisplayText: { fontSize: 18, fontWeight: '900', color: '#3182F6' },
+  timePickerSubLabel: {
+    fontSize: 12,
+    color: '#666',
+    fontWeight: '700',
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  timeChipScroll: { paddingVertical: 4, paddingRight: 8 },
+  timeChip: {
+    minWidth: 48,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1,
+    borderColor: '#EEE',
+    marginRight: 6,
+    marginBottom: 6,
+    alignItems: 'center',
+  },
+  timeChipOn: { backgroundColor: '#3182F6', borderColor: '#3182F6' },
+  timeChipText: { fontSize: 14, color: '#666', fontWeight: '700' },
+  timeChipTextOn: { color: '#FFF', fontWeight: '800' },
   disabledJoinButton: {
     paddingVertical: 16,
     borderRadius: 14,
