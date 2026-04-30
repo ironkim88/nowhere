@@ -6,6 +6,15 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView from './Map';
+import {
+  ensureAnonymousAuth,
+  subscribeToPosts,
+  subscribeToProfile,
+  upsertPost,
+  deletePostFs,
+  upsertProfile,
+  seedIfEmpty,
+} from './firebase';
 
 const STORAGE = {
   posts: '@nowhere_posts_v1',
@@ -269,9 +278,11 @@ const mockUserProfile = (nickname) => {
 
 export default function App() {
   const [tab, setTab] = useState('홈');
-  const [posts, setPosts] = useState(seedPosts);
+  const [posts, setPosts] = useState([]);
   const [chats, setChats] = useState(seedChats);
   const [profile, setProfile] = useState(defaultProfile);
+  const [uid, setUid] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [refreshing, setRefreshing] = useState(false);
   const [filterCategory, setFilterCategory] = useState(null);
@@ -333,36 +344,65 @@ export default function App() {
     }
   }, []);
 
+  // Anonymous auth
   useEffect(() => {
     (async () => {
       try {
-        const [p, c, pr, n, ob] = await Promise.all([
-          AsyncStorage.getItem(STORAGE.posts),
+        const user = await ensureAnonymousAuth();
+        setUid(user.uid);
+        setAuthReady(true);
+        // Seed posts on first run
+        await seedIfEmpty(seedPosts());
+      } catch (e) {
+        console.warn('auth failed', e);
+        setAuthReady(true);
+      }
+    })();
+  }, []);
+
+  // Local-only loads (chats, notifications, onboarding)
+  useEffect(() => {
+    (async () => {
+      try {
+        const [c, n, ob] = await Promise.all([
           AsyncStorage.getItem(STORAGE.chats),
-          AsyncStorage.getItem(STORAGE.profile),
           AsyncStorage.getItem(STORAGE.notifications),
           AsyncStorage.getItem(STORAGE.onboarded),
         ]);
-        if (p) setPosts(JSON.parse(p));
         if (c) setChats(JSON.parse(c));
-        if (pr) setProfile(JSON.parse(pr));
         if (n) setNotifications(JSON.parse(n));
         if (!ob) {
           setModal((m) => ({ ...m, onboarding: true }));
         }
-      } catch (e) { console.warn('load failed', e); }
+      } catch (e) { console.warn('local load failed', e); }
     })();
   }, []);
 
+  // Subscribe to posts (Firestore)
   useEffect(() => {
-    AsyncStorage.setItem(STORAGE.posts, JSON.stringify(posts)).catch(() => {});
-  }, [posts]);
+    if (!authReady) return;
+    const unsub = subscribeToPosts((posts) => setPosts(posts));
+    return () => unsub();
+  }, [authReady]);
+
+  // Subscribe to profile (Firestore) — auto-create on first run
+  useEffect(() => {
+    if (!authReady || !uid) return;
+    const unsub = subscribeToProfile(uid, (remoteProfile) => {
+      if (remoteProfile) {
+        setProfile(remoteProfile);
+      } else {
+        const initial = { ...defaultProfile, uid };
+        upsertProfile(initial);
+        setProfile(initial);
+      }
+    });
+    return () => unsub();
+  }, [authReady, uid]);
+
   useEffect(() => {
     AsyncStorage.setItem(STORAGE.chats, JSON.stringify(chats)).catch(() => {});
   }, [chats]);
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE.profile, JSON.stringify(profile)).catch(() => {});
-  }, [profile]);
   useEffect(() => {
     AsyncStorage.setItem(STORAGE.notifications, JSON.stringify(notifications)).catch(() => {});
   }, [notifications]);
@@ -438,7 +478,7 @@ export default function App() {
       reviews: [],
       comments: [],
     };
-    setPosts([newPost, ...posts]);
+    upsertPost(newPost).catch((e) => Alert.alert('저장 실패', String(e?.message || e)));
     setForm(initialForm);
     setPickedLocation(null);
     setPickedImage(null);
@@ -453,7 +493,7 @@ export default function App() {
         text: '삭제',
         style: 'destructive',
         onPress: () => {
-          setPosts(posts.filter((p) => p.id !== id));
+          deletePostFs(id).catch(() => {});
           close('detail');
           setActivePost(null);
         },
@@ -467,8 +507,13 @@ export default function App() {
   };
 
   const updateActivePost = (updated) => {
-    setPosts(posts.map((p) => (p.id === updated.id ? updated : p)));
+    upsertPost(updated).catch(() => {});
     setActivePost(updated);
+  };
+
+  const updateProfile = (next) => {
+    setProfile(next);
+    if (next.uid) upsertProfile(next).catch(() => {});
   };
 
   const handleJoin = () => {
@@ -782,17 +827,17 @@ export default function App() {
   const toggleFriend = (nickname) => {
     const friends = profile.friends || [];
     if (friends.includes(nickname)) {
-      setProfile({ ...profile, friends: friends.filter((n) => n !== nickname) });
+      updateProfile({ ...profile, friends: friends.filter((n) => n !== nickname) });
     } else {
       const blocked = (profile.blocked || []).filter((n) => n !== nickname);
-      setProfile({ ...profile, friends: [...friends, nickname], blocked });
+      updateProfile({ ...profile, friends: [...friends, nickname], blocked });
     }
   };
 
   const toggleBlock = (nickname) => {
     const blocked = profile.blocked || [];
     if (blocked.includes(nickname)) {
-      setProfile({ ...profile, blocked: blocked.filter((n) => n !== nickname) });
+      updateProfile({ ...profile, blocked: blocked.filter((n) => n !== nickname) });
     } else {
       Alert.alert(
         '차단',
@@ -804,7 +849,7 @@ export default function App() {
             style: 'destructive',
             onPress: () => {
               const friends = (profile.friends || []).filter((n) => n !== nickname);
-              setProfile({ ...profile, blocked: [...blocked, nickname], friends });
+              updateProfile({ ...profile, blocked: [...blocked, nickname], friends });
               close('userProfile');
             },
           },
@@ -907,7 +952,7 @@ export default function App() {
         },
       ],
     };
-    setPosts(posts.map((p) => (p.id === updated.id ? updated : p)));
+    upsertPost(updated).catch(() => {});
     setActivePost(updated);
     setCommentInput('');
   };
@@ -960,7 +1005,7 @@ export default function App() {
     setActiveChat(updated);
     setChatInput('');
 
-    setProfile({
+    updateProfile({
       ...profile,
       chatUsage: {
         date: usage.date,
@@ -1856,7 +1901,7 @@ export default function App() {
                 style={styles.submitBtn}
                 onPress={() => {
                   if (!editNickname.trim()) return;
-                  setProfile({ ...profile, nickname: editNickname.trim() });
+                  updateProfile({ ...profile, nickname: editNickname.trim() });
                   close('editProfile');
                 }}
               >
@@ -3036,7 +3081,7 @@ export default function App() {
                           {
                             text: '삭제',
                             style: 'destructive',
-                            onPress: () => setPosts(posts.filter((x) => x.id !== p.id)),
+                            onPress: () => deletePostFs(p.id).catch(() => {}),
                           },
                         ]);
                       }}
@@ -3159,7 +3204,7 @@ export default function App() {
                 style={styles.input}
                 placeholder="다른 사람에게 보일 닉네임"
                 value={profile.nickname}
-                onChangeText={(t) => setProfile({ ...profile, nickname: t })}
+                onChangeText={(t) => updateProfile({ ...profile, nickname: t })}
                 maxLength={20}
               />
               <Text style={styles.label}>연령대</Text>
@@ -3168,7 +3213,7 @@ export default function App() {
                   <TouchableOpacity
                     key={a}
                     style={[styles.chip, profile.ageGroup === a && styles.chipOn]}
-                    onPress={() => setProfile({ ...profile, ageGroup: a })}
+                    onPress={() => updateProfile({ ...profile, ageGroup: a })}
                   >
                     <Text style={[styles.chipTxt, profile.ageGroup === a && styles.chipTxtOn]}>
                       {a}
@@ -3182,7 +3227,7 @@ export default function App() {
                   <TouchableOpacity
                     key={g}
                     style={[styles.chip, profile.gender === g && styles.chipOn]}
-                    onPress={() => setProfile({ ...profile, gender: g })}
+                    onPress={() => updateProfile({ ...profile, gender: g })}
                   >
                     <Text style={[styles.chipTxt, profile.gender === g && styles.chipTxtOn]}>
                       {g}
