@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app';
+import { getAnalytics, isSupported, logEvent } from 'firebase/analytics';
 import {
   getAuth,
   signInAnonymously,
@@ -34,6 +35,19 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+
+let analytics = null;
+isSupported()
+  .then((ok) => {
+    if (ok) analytics = getAnalytics(app);
+  })
+  .catch(() => {});
+
+export const trackEvent = (name, params) => {
+  try {
+    if (analytics) logEvent(analytics, name, params || {});
+  } catch (e) {}
+};
 
 export const ensureAnonymousAuth = () =>
   new Promise((resolve, reject) => {

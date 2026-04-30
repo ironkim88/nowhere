@@ -7,6 +7,14 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView from './Map';
 import {
+  TERMS_OF_SERVICE,
+  PRIVACY_POLICY,
+  LOCATION_TERMS,
+  LEGAL_VERSION,
+  EFFECTIVE_DATE,
+  CONTACT_EMAIL,
+} from './legal';
+import {
   ensureAnonymousAuth,
   subscribeToAuth,
   subscribeToPosts,
@@ -23,6 +31,7 @@ import {
   signInWithGoogle,
   signOutAndAnon,
   isGoogleUser,
+  trackEvent,
   subscribeToAnnouncements,
   postAnnouncement,
   subscribeToAllReports,
@@ -504,7 +513,10 @@ export default function App() {
     report: false, chat: false, editProfile: false, userProfile: false,
     notifications: false, onboarding: false, mapView: false, pickLocation: false,
     admin: false, groupChat: false, tutorial: false, announce: false,
+    legal: false,
   });
+  const [legalDoc, setLegalDoc] = useState('terms'); // 'terms' | 'privacy' | 'location'
+  const [legalAgreed, setLegalAgreed] = useState(false);
   const [toast, setToast] = useState(null);
   const showToast = (msg, kind = 'info') => {
     setToast({ msg, kind });
@@ -786,6 +798,7 @@ export default function App() {
       comments: [],
     };
     upsertPost(newPost).catch((e) => Alert.alert('저장 실패', String(e?.message || e)));
+    trackEvent('post_create', { category: form.category, capacity: form.capacity });
     setForm(initialForm);
     setPickedLocation(null);
     setPickedImage(null);
@@ -940,6 +953,7 @@ export default function App() {
         },
       ],
     });
+    trackEvent('post_join', { postId: activePost.id, category: activePost.category });
   };
 
   const handleCloseEarly = () => {
@@ -1177,6 +1191,11 @@ export default function App() {
       ];
     }
     updateActivePost({ ...activePost, reviews: next });
+  };
+
+  const trackTab = (tab) => {
+    setTab(tab);
+    trackEvent('screen_view', { screen_name: tab });
   };
 
   const handleCancelJoin = () => {
@@ -2500,10 +2519,7 @@ export default function App() {
                     if (!uid) return;
                     try {
                       await Clipboard.setStringAsync(uid);
-                      Alert.alert(
-                        'UID 복사됨',
-                        '관리자로 등록하려면 Firebase Console → Firestore → admins 컬렉션에 이 UID로 문서를 추가하세요.',
-                      );
+                      showToast('UID 복사됨', 'success');
                     } catch (e) {
                       Alert.alert('UID', uid);
                     }
@@ -2514,6 +2530,41 @@ export default function App() {
                     {uid ? `${uid.slice(0, 12)}...` : '로딩...'}
                   </Text>
                 </TouchableOpacity>
+
+                <View style={styles.legalLinksBox}>
+                  <Text style={styles.legalLinksLabel}>법적 고지</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setLegalDoc('terms');
+                        open('legal');
+                      }}
+                    >
+                      <Text style={styles.legalLink}>이용약관</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.legalSep}> · </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setLegalDoc('privacy');
+                        open('legal');
+                      }}
+                    >
+                      <Text style={styles.legalLink}>개인정보처리방침</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.legalSep}> · </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setLegalDoc('location');
+                        open('legal');
+                      }}
+                    >
+                      <Text style={styles.legalLink}>위치정보 약관</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.legalContact}>
+                    문의: {CONTACT_EMAIL}
+                  </Text>
+                </View>
                 {Platform.OS === 'web' &&
                   typeof Notification !== 'undefined' &&
                   Notification.permission !== 'granted' && (
@@ -4238,6 +4289,68 @@ export default function App() {
           </View>
         </Modal>
 
+        {/* Legal Documents Modal */}
+        <Modal
+          visible={modal.legal}
+          animationType="slide"
+          transparent
+          onRequestClose={() => close('legal')}
+        >
+          <View style={styles.modalBg}>
+            <View style={styles.modalFull}>
+              <View style={styles.modalHead}>
+                <Text style={styles.modalTitle}>
+                  {legalDoc === 'terms'
+                    ? '이용약관'
+                    : legalDoc === 'privacy'
+                    ? '개인정보처리방침'
+                    : '위치정보 약관'}
+                </Text>
+                <TouchableOpacity onPress={() => close('legal')}>
+                  <Text style={styles.xBtn}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.legalTabRow}>
+                {[
+                  { id: 'terms', label: '이용약관' },
+                  { id: 'privacy', label: '개인정보' },
+                  { id: 'location', label: '위치정보' },
+                ].map((t) => (
+                  <TouchableOpacity
+                    key={t.id}
+                    style={[
+                      styles.legalTab,
+                      legalDoc === t.id && styles.legalTabOn,
+                    ]}
+                    onPress={() => setLegalDoc(t.id)}
+                  >
+                    <Text
+                      style={[
+                        styles.legalTabText,
+                        legalDoc === t.id && styles.legalTabTextOn,
+                      ]}
+                    >
+                      {t.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <ScrollView style={{ flex: 1 }}>
+                <Text style={styles.legalBody}>
+                  {legalDoc === 'terms'
+                    ? TERMS_OF_SERVICE
+                    : legalDoc === 'privacy'
+                    ? PRIVACY_POLICY
+                    : LOCATION_TERMS}
+                </Text>
+                <Text style={styles.legalVersion}>
+                  v{LEGAL_VERSION} · 시행일 {EFFECTIVE_DATE}
+                </Text>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
         {/* Group Chat Modal (per post, 12h after deadline) */}
         <Modal
           visible={modal.groupChat}
@@ -4570,14 +4683,56 @@ export default function App() {
 
               <View style={styles.onboardTerms}>
                 <Text style={styles.onboardTermsText}>
-                  시작하면 이용약관과 개인정보 처리방침에 동의한 것으로 간주돼요.{'\n'}
                   · 만 14세 미만은 가입할 수 없어요.{'\n'}
                   · 노쇼/폭언/사기 신고 누적 시 이용이 제한될 수 있어요.
                 </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setLegalDoc('terms');
+                      open('legal');
+                    }}
+                  >
+                    <Text style={styles.legalLink}>이용약관</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.onboardTermsText}> · </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setLegalDoc('privacy');
+                      open('legal');
+                    }}
+                  >
+                    <Text style={styles.legalLink}>개인정보처리방침</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.onboardTermsText}> · </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setLegalDoc('location');
+                      open('legal');
+                    }}
+                  >
+                    <Text style={styles.legalLink}>위치정보 약관</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
               <TouchableOpacity
-                style={styles.submitBtn}
+                style={styles.agreeRow}
+                onPress={() => setLegalAgreed(!legalAgreed)}
+              >
+                <View style={[styles.checkbox, legalAgreed && styles.checkboxOn]}>
+                  {legalAgreed ? <Text style={styles.checkboxMark}>✓</Text> : null}
+                </View>
+                <Text style={styles.agreeText}>
+                  위 3개 약관에 모두 동의합니다 (필수)
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.submitBtn, !legalAgreed && { backgroundColor: '#CCC' }]}
                 onPress={async () => {
+                  if (!legalAgreed) {
+                    Alert.alert('알림', '약관에 동의해주세요.');
+                    return;
+                  }
                   const nick = profile.nickname.trim();
                   if (!nick) {
                     Alert.alert('알림', '닉네임을 입력해주세요.');
@@ -4609,8 +4764,15 @@ export default function App() {
                       return;
                     }
                   } catch (e) {}
-                  updateProfile({ ...profile, nickname: nick, ageVerified: true });
+                  updateProfile({
+                    ...profile,
+                    nickname: nick,
+                    ageVerified: true,
+                    legalAgreedVersion: LEGAL_VERSION,
+                    legalAgreedAt: Date.now(),
+                  });
                   await AsyncStorage.setItem(STORAGE.onboarded, '1');
+                  trackEvent('signup_complete', { hasGoogle: isGoogleUser(authUser) });
                   close('onboarding');
                 }}
               >
@@ -6098,6 +6260,64 @@ const styles = StyleSheet.create({
     borderColor: '#EEE',
   },
   adminMiniBtnText: { fontSize: 11, fontWeight: '800' },
+  legalLink: { fontSize: 11, color: '#3182F6', fontWeight: '700', textDecorationLine: 'underline' },
+  legalSep: { fontSize: 11, color: '#888' },
+  agreeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 4,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#CCC',
+    marginRight: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxOn: { backgroundColor: '#3182F6', borderColor: '#3182F6' },
+  checkboxMark: { color: '#FFF', fontWeight: '900', fontSize: 12 },
+  agreeText: { fontSize: 13, color: '#191F28', fontWeight: '600' },
+  legalLinksBox: {
+    marginTop: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#EEE',
+  },
+  legalLinksLabel: { fontSize: 11, color: '#888', fontWeight: '700', marginBottom: 6 },
+  legalContact: { fontSize: 10, color: '#AAA', marginTop: 8 },
+  legalTabRow: {
+    flexDirection: 'row',
+    marginBottom: 12,
+    backgroundColor: '#F0F4FF',
+    padding: 4,
+    borderRadius: 10,
+  },
+  legalTab: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  legalTabOn: { backgroundColor: '#FFF' },
+  legalTabText: { fontSize: 12, color: '#888', fontWeight: '700' },
+  legalTabTextOn: { color: '#3182F6', fontWeight: '900' },
+  legalBody: {
+    fontSize: 12,
+    color: '#333',
+    lineHeight: 20,
+    paddingBottom: 24,
+  },
+  legalVersion: {
+    fontSize: 11,
+    color: '#AAA',
+    textAlign: 'center',
+    marginTop: 16,
+    marginBottom: 24,
+  },
   rankRow: {
     flexDirection: 'row',
     alignItems: 'center',
